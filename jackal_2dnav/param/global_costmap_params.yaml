@@ -1,0 +1,9 @@
+global_costmap:
+  global_frame: map
+  robot_base_frame: base_link
+  update_frequency: 5.0 # The frequency in Hz for the map to be updated.  
+  static_map: true # true --> intialize costmap based on a map served by the map_server
+  rolling_window: false # true --> costmap will remain centered around the robot as the robot moves through the world
+  width: 10.0 # The width of the map in meters. 
+  height: 10.0 # The height of the map in meters. 
+  resolution: 0.05 # The resolution of the map in meters/cell.
