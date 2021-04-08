@@ -1,0 +1,7 @@
+<launch>
+   <master auto="start"/>
+ <!-- Run node to send goals -->
+   <node pkg="path_planning" type="path_planning.py" name="path_planning" output="screen" >
+    <param name="path_pattern" value="S-3L-2L-2R-1R-5L-F" />
+   </node>
+</launch>
