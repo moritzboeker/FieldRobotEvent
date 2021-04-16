@@ -27,44 +27,47 @@ def scan2cart(scan, max_range=30.0):
 
 
 def laser_callback(scan):
-    global angle
-    global row_width
+    if state == "state_in_row":
+        global angle
+        global row_width
 
-    angle_increment = scan.angle_increment
-    angle_outer_limit_curr = scan.angle_max
-    angle_outer_limit_targ = np.radians(130)
-    angle_inner_limit_targ = np.radians(20)
-    idx_ranges_outer = int(np.round((angle_outer_limit_curr - angle_outer_limit_targ) / angle_increment))
-    idx_ranges_inner = int(np.round((angle_outer_limit_curr - angle_inner_limit_targ) / angle_increment))
-    
-    scan_cart = scan2cart(scan, max_range=row_width)
-    scan_left = scan_cart[:, -idx_ranges_inner:-idx_ranges_outer]
-    scan_right = scan_cart[:, idx_ranges_outer:idx_ranges_inner]
+        angle_increment = scan.angle_increment
+        angle_outer_limit_curr = scan.angle_max
+        angle_outer_limit_targ = np.radians(130)
+        angle_inner_limit_targ = np.radians(20)
+        idx_ranges_outer = int(np.round((angle_outer_limit_curr - angle_outer_limit_targ) / angle_increment))
+        idx_ranges_inner = int(np.round((angle_outer_limit_curr - angle_inner_limit_targ) / angle_increment))
+        
+        scan_cart = scan2cart(scan, max_range=row_width)
+        scan_left = scan_cart[:, -idx_ranges_inner:-idx_ranges_outer]
+        scan_right = scan_cart[:, idx_ranges_outer:idx_ranges_inner]
 
-    # # use euclidean distance
-    # mean_left = np.nanmean(scan_left, axis=1)
-    # mean_right = np.nanmean(scan_right, axis=1)
-    # mean_left = np.sqrt(mean_left[0]**2+mean_left[1]**2)
-    # mean_right = np.sqrt(mean_right[0]**2+mean_right[1]**2)
-    mean_left = np.nanmean(scan_left[1, :])
-    mean_right = np.nanmean(scan_right[1, :])
+        # # use euclidean distance
+        # mean_left = np.nanmean(scan_left, axis=1)
+        # mean_right = np.nanmean(scan_right, axis=1)
+        # mean_left = np.sqrt(mean_left[0]**2+mean_left[1]**2)
+        # mean_right = np.sqrt(mean_right[0]**2+mean_right[1]**2)
+        mean_left = np.nanmean(scan_left[1, :])
+        mean_right = np.nanmean(scan_right[1, :])
 
-    offset = mean_right + mean_left
-    angle = - offset / (mean_left + mean_left)    
+        offset = mean_right + mean_left
+        angle = - offset / (mean_left + mean_left)    
 
-    # # 2. solution
-    # ranges = trim_scan(scan, max_range=row_width)
-    # ranges_left = ranges[idx_ranges_outer:idx_ranges_inner]
-    # ranges_right = ranges[-idx_ranges_inner:-idx_ranges_outer]
-    # mean_left = np.nanmean(ranges_left)
-    # mean_right = np.nanmean(ranges_right)
+        # # 2. solution
+        # ranges = trim_scan(scan, max_range=row_width)
+        # ranges_left = ranges[idx_ranges_outer:idx_ranges_inner]
+        # ranges_right = ranges[-idx_ranges_inner:-idx_ranges_outer]
+        # mean_left = np.nanmean(ranges_left)
+        # mean_right = np.nanmean(ranges_right)
 
-    # # plot xy-graph
-    # scan_extract = np.concatenate((scan_right, scan_left), axis=1)
-    # print("scan_extract", scan_extract.shape)
-    # plt.figure()
-    # plt.plot(scan_extract[0,:], scan_extract[1,:], "ob")
-    # plt.show()
+        # # plot xy-graph
+        # scan_extract = np.concatenate((scan_right, scan_left), axis=1)
+        # print("scan_extract", scan_extract.shape)
+        # plt.figure()
+        # plt.plot(scan_extract[0,:], scan_extract[1,:], "ob")
+        # plt.show()
+    else:
+        pass
 
 def state_in_row(pub_vel):
     setpoint_alpha = 0;                         # [rad]
@@ -94,24 +97,81 @@ def state_in_row(pub_vel):
         return "state_in_row"
 
 def state_headland():
-    print("send headland goal")
+    global row_width
+    global lin_row_enter
+    global lin_row_exit
+    global turn_l
+    global turn_r
+
     path_pattern = rospy.get_param('~path_pattern')
     path_pattern = path_pattern.replace("-", "")
     path_pattern = path_pattern[1:-1]
 
-    result = movebase_client(0.5, np.pi/2)
-    if result:
-        rospy.logwarn("Goal execution done!")
-    else:
-        rospy.logwarn("Goal not be reached!")
+    if len(path_pattern) > 0:
+        which_row = path_pattern[0]
+        which_turn = path_pattern[1]
+        if which_turn == 'L':
+            turn = turn_l
+        elif which_turn == 'R':
+            turn = turn_r
+        else:
+            rospy.logerr("Path pattern syntax error: undefined parameter '%s' for turn specification!", which_turn)
+            return "error"
 
-    end_of_pattern = True
-    if end_of_pattern is True:
-        return "done"
-    else:
+        result_straight = movebase_client(lin_row_exit/2, 0.0, 0.0)
+        if result_straight:
+            rospy.logwarn("1. Straight goal execution done!")
+        else:
+            rospy.logerr("1. Straight goal not reached!")
+            return "error"
+        
+        result_turn = movebase_client(lin_row_exit, row_width/2, turn)
+        if result_turn:
+            rospy.logwarn("2. Turn goal execution done!")
+        else:
+            rospy.logerr("2. Turn goal not reached!")
+            return "error"
+
+        try:
+            which_row = int(which_row)
+        except ValueError:
+            rospy.logerr("Path pattern syntax error: non-integer value for row specification!")
+            return "error"
+
+        if which_row > 1:
+            result_straight = movebase_client((which_row-1)*row_width, 0.0, 0.0)
+            if result_straight:
+                rospy.logwarn("3.1 Straight goal execution done!")
+            else:
+                rospy.logerr("3.1 Straight goal not reached!")
+                return "error"
+
+        result_turn = movebase_client(0.0, 0.0, turn/2)
+        if result_turn:
+            rospy.logwarn("3.2 Turn goal execution done!")
+        else:
+            rospy.logerr("3.2 Turn goal not reached!")
+            return "error"
+
+        result_turn = movebase_client(lin_row_enter, row_width/2-0.1, turn/2)
+        if result_turn:
+            rospy.logwarn("4. Turn goal execution done!")
+        else:
+            rospy.logerr("4. Turn goal not reached!")
+            return "error"
+
+        result_straight = movebase_client(lin_row_enter/2, 0.0, 0.0)
+        if result_straight:
+            rospy.logwarn("5. Straight goal execution done!")
+        else:
+            rospy.logerr("5. Straight goal not reached!")
+            return "error"
+
         return "state_in_row"
+    else:
+        return "done"
 
-def movebase_client(lin_x, ang_z):
+def movebase_client(lin_x, lin_y, ang_z):
     client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
     client.wait_for_server()
 
@@ -119,6 +179,7 @@ def movebase_client(lin_x, ang_z):
     goal.target_pose.header.frame_id = "base_link"
     goal.target_pose.header.stamp = rospy.Time.now()
     goal.target_pose.pose.position.x = lin_x
+    goal.target_pose.pose.position.y = lin_y
     q_rot = quaternion_from_euler(0.0, 0.0, ang_z)
     goal.target_pose.pose.orientation.x = q_rot[0]
     goal.target_pose.pose.orientation.y = q_rot[1]
@@ -135,12 +196,21 @@ def movebase_client(lin_x, ang_z):
         
 
 def state_idle():
+    pass
     return "state_idle"
+
+def state_error():
+    pass
+    return "state_done"
 
             
 angle = 0.0
 row_width = 0.75
-state = "state_headland" 
+turn_l = np.pi/2
+turn_r = -np.pi/2
+lin_row_exit = 1.0
+lin_row_enter = lin_row_exit
+state = "state_in_row" 
 
 if __name__ == '__main__':
     rospy.init_node('path_planning', anonymous=True)
@@ -155,6 +225,8 @@ if __name__ == '__main__':
             state = state_headland()
         elif state == "state_idle":
             state = state_idle()
+        elif state == "error":
+            state = state_error()
         else:
             state = "done"
 
