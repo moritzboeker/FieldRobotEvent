@@ -19,13 +19,6 @@ def scan2cart(scan, max_range=30.0):
     scan_cart[:, ignore_ranges] = None
     return scan_cart
 
-# def trim_scan(scan, max_range=30.0):
-#     ignore_ranges = np.array(scan.ranges) > max_range
-#     scan = np.array(scan.ranges)
-#     scan[ignore_ranges] = None
-#     return scan
-
-
 def laser_callback(scan):
     if state == "state_in_row":
         global angle
@@ -42,23 +35,11 @@ def laser_callback(scan):
         scan_left = scan_cart[:, -idx_ranges_inner:-idx_ranges_outer]
         scan_right = scan_cart[:, idx_ranges_outer:idx_ranges_inner]
 
-        # # use euclidean distance
-        # mean_left = np.nanmean(scan_left, axis=1)
-        # mean_right = np.nanmean(scan_right, axis=1)
-        # mean_left = np.sqrt(mean_left[0]**2+mean_left[1]**2)
-        # mean_right = np.sqrt(mean_right[0]**2+mean_right[1]**2)
         mean_left = np.nanmean(scan_left[1, :])
         mean_right = np.nanmean(scan_right[1, :])
 
         offset = mean_right + mean_left
         angle = - offset / (mean_left + mean_left)    
-
-        # # 2. solution
-        # ranges = trim_scan(scan, max_range=row_width)
-        # ranges_left = ranges[idx_ranges_outer:idx_ranges_inner]
-        # ranges_right = ranges[-idx_ranges_inner:-idx_ranges_outer]
-        # mean_left = np.nanmean(ranges_left)
-        # mean_right = np.nanmean(ranges_right)
 
         # # plot xy-graph
         # scan_extract = np.concatenate((scan_right, scan_left), axis=1)
