@@ -9,7 +9,6 @@ from tf.transformations import quaternion_from_euler
 
 import numpy as np
 import matplotlib.pyplot as plt
-# from scipy.cluster.hierarchy import fclusterdata
 
 def scan2cart(scan, max_range=30.0):
     angles = np.linspace(scan.angle_min, scan.angle_max, len(scan.ranges))
@@ -23,12 +22,12 @@ def scan2cart(scan, max_range=30.0):
     scan_cart = scan_cart[allow_ranges, :]
     return scan_cart
 
-
-
-
 def laser_callback(scan):
-    global alpha_old
-    global alpha_new
+    global theta
+    global ydist
+    global theta_valid
+    global ydist_valid
+    global row_width
     if state == "state_in_row":
         # convert scan from polar into cartesian coordinates
         scan_cart = scan2cart(scan, max_range=30.0)
@@ -38,14 +37,6 @@ def laser_callback(scan):
         y_dist_scan = np.diff(scan_cart[:, 1])
         eucl_dist = np.sqrt(x_dist_scan**2 + y_dist_scan**2)
         eucl_dist = np.insert(eucl_dist, 0, 0, axis=0)
-        
-        # # plot histogram of x, y and euclidean distance
-        # n_bins = 10
-        # fig, axs = plt.subplots(1, 3, sharey=True, tight_layout=True)
-        # axs[0].hist(x_dist_scan, bins=n_bins)
-        # axs[1].hist(y_dist_scan, bins=n_bins)
-        # axs[2].hist(eucl_dist, bins=n_bins)
-        # plt.show(block=True)
 
         # determine which scan points belong to one and the same plant and split scan accordingly
         idx_next_plant = np.where(eucl_dist > 0.05)
@@ -59,8 +50,8 @@ def laser_callback(scan):
                 mean_position = np.nanmean(plant, axis=0)
                 plants_all.append(mean_position)
         plants_all = np.array(plants_all)
-
-        # # plot xy-graph of cartesian scan and mean position of detected plants
+        # # PLOT XY-SCATTER
+        # # of cartesian scan and mean position of detected plants
         # plt.figure()
         # plt.plot(scan_cart[:,0], scan_cart[:,1], "ob", label="cartesian laser scan")
         # plt.plot(plants_all[:,0], plants_all[:,1], "xr", label="averaged plant position with at least 3 laser points")
@@ -70,72 +61,156 @@ def laser_callback(scan):
         # calculate line angles from one plant to another
         x_dist_plant = np.diff(plants_all[:, 0])
         y_dist_plant = np.diff(plants_all[:, 1])
-        alphas = np.arctan2(y_dist_plant, x_dist_plant)
+        thetas = np.arctan2(y_dist_plant, x_dist_plant)
         # change perspective plants to robot --> robot to plants
-        alphas = -alphas
+        thetas = -thetas
         # Modify angles so that 
-        # e.g. [   9  125   17   -2   75 -176 -175   57 -164] --> [   9  125   17   -2   75    3    4   57 -164]
-        alphas = np.where(alphas < np.radians(-170), alphas + np.pi, alphas)
-        alphas = np.where(alphas > np.radians(170), alphas - np.pi, alphas)
+        # e.g. [   9  125   17   -2   75 -176 -175   57 -164] --> [   9  125   17   -2   75    4    5   57 -164]
+        thetas = np.where(thetas < np.radians(-170), thetas + np.pi, thetas)
+        thetas = np.where(thetas > np.radians(170), thetas - np.pi, thetas)
 
-        # determine the histogram of line angles
-        n_bins = 72
-        range_min = -np.pi
-        range_max = np.pi
-        hist_res = (range_max - range_min) / n_bins # [degrees/bin] resolution of histogram
-        bin_counts, edges = np.histogram(alphas, bins=n_bins, range=(range_min, range_max))
-        # # plot histogram of line angles
+        # apply a histogram to line angles
+        range_min_theta = -np.pi
+        range_max_theta = np.pi
+        bin_res = np.radians(5) # [radians/bin] resolution of histogram
+        n_bins_theta = int(np.round((range_max_theta - range_min_theta) / bin_res))
+        bin_counts, bin_edges = np.histogram(thetas, bins=n_bins_theta, range=(range_min_theta, range_max_theta))
+        # # PLOT HISTOGRAM
+        # # of line angles
         # fig, axs = plt.subplots()
-        # axs.hist(np.degrees(alphas), bins=n_bins, range=(np.degrees(range_min), np.degrees(range_max)))
+        # axs.hist(np.degrees(thetas), bins=n_bins_theta, range=(np.degrees(range_min_theta), np.degrees(range_max_theta)))
         # plt.show(block=True)
 
         # evaluate histogram around previous angle of robot to the center line of corn row
-        tol_degrees = 10 # [degrees] when determining alpha, we will look for angles +- this angle around alpha_old
-        tol_idx = np.round(np.radians(tol_degrees) / hist_res)
-        alpha_old = alpha_new
-        alpha_old_hist_idx = np.round((alpha_old + np.pi) / hist_res)
-        if alpha_old_hist_idx + tol_idx >= n_bins:
-            indices = np.r_[(alpha_old_hist_idx - tol_idx):, 0:(alpha_old_hist_idx + tol_idx - n_bins - 1)]
-        elif alpha_old_hist_idx - tol_idx < 0:
-            indices = np.r_[(alpha_old_hist_idx - tol_idx + n_bins):, 0:(alpha_old_hist_idx + tol_idx + 1)]
-        else:
-            indices = np.r_[(alpha_old_hist_idx - tol_idx):(alpha_old_hist_idx + tol_idx + 1)]
-        indices = indices.astype(dtype=int)
-
+        if not np.isnan(theta):
+            # theta will only be updated if the previous theta has been a valid angle
+            # at the end of the row, 'nan' may be assigned to theta
+            # in such a case the previous theta will not be updated
+            theta_valid = theta
+        tol_degrees = 10 # [degrees] when determining theta, we will look for angles +- this angle around theta_old
+        tol_degrees_bins = np.round(np.radians(tol_degrees) / bin_res)
+        theta_hist_idx = np.round((theta_valid + np.pi) / bin_res)
+        indices_peak_theta = indices_peak(theta_hist_idx, tol_degrees_bins, n_bins_theta)
         # determine current angle of robot to the center line of corn row
-        bin_counts_peak = bin_counts[indices]
-        edges_peak = edges[indices] + hist_res / 2
-        alpha_new = np.sum(bin_counts_peak * edges_peak) / np.sum(bin_counts_peak)
+        print("---------------theta", theta_hist_idx, tol_degrees_bins, n_bins_theta)
+        theta = mean_peak(indices_peak_theta, bin_counts, bin_edges, bin_res)
+        print("---------------theta", theta)
 
-        np.set_printoptions(precision=1, suppress=True)
-        print("number of plants:", plants_all.shape[0], "angle:", np.degrees(alpha_new))
+        # rotate scan around z by theta_new
+        c, s = np.cos(-theta), np.sin(-theta)
+        rot_z = np.array(((c, -s), (s, c)))
+        scan_cart_rot = np.matmul(scan_cart, rot_z)
+        # # PLOT XY-SCATTER
+        # # of rotated cartesian scan
+        # plt.figure()
+        # plt.plot(scan_cart_rot[:,0], scan_cart_rot[:,1], "ob", label="rotated cartesian laser scan")
+        # plt.legend(loc='lower left')
+        # plt.show(block=True)
+
+        # apply a histogram to y-distances of rotated scan
+        range_min_ydist = -row_width # [m]
+        range_max_ydist = row_width # [m]
+        bin_res = 0.01 # [m]
+        n_bins_ydist = int(np.round((range_max_ydist - range_min_ydist) / bin_res)) # number of bins for y dist histogram
+        y_dists = scan_cart_rot[:, 1]
+        bin_counts, bin_edges = np.histogram(y_dists, bins=n_bins_ydist, range=(range_min_ydist, range_max_ydist))
+        # # PLOT HISTOGRAM
+        # # of y distances from robot to plants
+        # fig, axs = plt.subplots()
+        # axs.hist(y_dists, bins=n_bins_ydist, range=(range_min_ydist, range_max_ydist))
+        # plt.show(block=True)  
+
+        # evaluate histogram around y-distance of robot to the center line of corn row
+        if not np.isnan(ydist):
+            # ydist will only be updated if the previous ydist has been a valid angle
+            # at the end of the row, 'nan' may be assigned to ydist
+            # in such a case the previous ydist will not be updated
+            ydist_valid = ydist
+        tol_ydist = 0.03 # [m]
+        tol_ydist_bins = np.round(tol_ydist / bin_res) # [bins]
+        ydist_max_idx = np.argmax(bin_counts)
+        indices_peak_ydist = indices_peak(ydist_max_idx, tol_ydist_bins, n_bins_ydist)
+        # determine current y-distance of robot to the center line of corn row
+        print("---------------ydist", ydist_max_idx, tol_ydist_bins, n_bins_ydist)
+        ydist = mean_peak(indices_peak_ydist, bin_counts, bin_edges, bin_res)
+        print("---------------ydist", ydist)
+        if ydist < 0:
+            ydist += row_width/2
+        else:
+            ydist -= row_width/2      
     else:
         pass
 
+def indices_peak(peak_idx, tol_bins, n_bins):
+    """ Module returning the indices before, at and after a peak for
+    evaluating a histogram
+    param1 peak_idx:    [bins] the index of the peak within the histogram
+    param2 tol_bins:    [bins] according to this tolerance indices will be returned
+                        before and after the peak
+    param3 n_bins:      [bins] the number of bins in the histogram
+    """
+    if peak_idx + tol_bins >= n_bins:
+        indices = np.r_[(peak_idx - tol_bins):n_bins, 0:(peak_idx + tol_bins - n_bins - 1)]
+    elif peak_idx - tol_bins < 0:
+        indices = np.r_[(peak_idx - tol_bins + n_bins):n_bins, 0:(peak_idx + tol_bins + 1)]
+    else:
+        indices = np.r_[(peak_idx - tol_bins):(peak_idx + tol_bins + 1)]
+    return indices.astype(dtype=int)
+
+def mean_peak(indices_peak, bin_counts, bin_edges, bin_res):
+    """ Module returning the mean of a peak in a histogram
+    param1 indices_peak:    [bins] the indices before, at and after a peak
+    param2 bin_counts:      [1] counts of each bin of histogram
+    param3 bin_edges:       [*] edges of each bin of histogram
+    param4 bin_res:         [*/bin] resolution of a bin of histogram 
+    """
+    bin_counts_peak = bin_counts[indices_peak]
+    if sum(bin_counts_peak) <= 1e-16:
+        # if all bins befor, at and after the peak are empty,
+        # we pretend the bin in the middle has one hit:
+        # e.g. [0, 0, 0, 0, 0] --> [0, 0, 1, 0, 0]
+        bin_counts_peak = np.zeros_like(bin_counts_peak)
+        bin_counts_peak[bin_counts_peak.shape[0]//2] = 1
+    bin_edges_peak = bin_edges[indices_peak] + bin_res / 2
+    """
+        RuntimeWarning: invalid value encountered in double_scalars
+        return np.sum(bin_counts_peak * bin_edges_peak) / np.sum(bin_counts_peak)
+    """
+    print("indices_peak", indices_peak)
+    print("bin_counts", bin_counts)
+    print("bin_edges", bin_edges)
+    print("bin_counts_peak", bin_counts_peak)
+    print("bin_edges_peak", bin_edges_peak)
+    return np.sum(bin_counts_peak * bin_edges_peak) / np.sum(bin_counts_peak)
+    
 def state_in_row(pub_vel):
-    setpoint_alpha = 0;                         # [rad]
-    # setpoint_ydist = 0;                       # [m]
-    error_alpha = setpoint_alpha - angle
-    # error_ydist = setpoint_ydist - y
+    global row_width
+    setpoint_theta = 0;                         # [rad]
+    setpoint_ydist = 0;                         # [m]
+    error_theta = setpoint_theta - theta_valid
+    error_ydist = setpoint_ydist - ydist_valid
 
     max_angular_z = np.pi/2;                    # [rad/s]
-    max_alpha = np.pi/4;                        # [rad]
-    # max_ydist = 0.75/2;                       # [m]
-    p_gain_alpha = max_angular_z/max_alpha;     # = 2.0
-    # p_gain_ydist = max_angular_z/max_ydist;   # = 4.19
+    max_theta = np.pi/4;                        # [rad]
+    max_ydist = row_width/2;                    # [m]
+    p_gain_theta = max_angular_z/max_theta;     # = 2.0
+    p_gain_ydist = max_angular_z/max_ydist*0.25;     # = 4.19
 
-    act_alpha = p_gain_alpha*error_alpha
-    # act_ydist = -p_gain_ydist*error_ydist
+    act_theta = p_gain_theta*error_theta
+    act_ydist = -p_gain_ydist*error_ydist
     
     cmd_vel = Twist()
-    cmd_vel.linear.x = 0.0
-    cmd_vel.angular.z = 0.0
-    # cmd_vel.angular.z = act_alpha
-    # cmd_vel.angular.z = act_alpha/2 + act_ydist/2
+    cmd_vel.linear.x = 0.5
+    # cmd_vel.angular.z = 0.0
+    # cmd_vel.angular.z = act_theta
+    cmd_vel.angular.z = act_ydist
+    # cmd_vel.angular.z = act_theta/2 + act_ydist/2
 
     pub_vel.publish(cmd_vel)        
+    # print(ydist_valid, act_ydist)
+    # print(theta_valid, act_theta)
 
-    if np.isnan(angle):
+    if np.isnan(theta) and np.isnan(ydist):
         return "state_headland"
     else:
         return "state_in_row"
@@ -247,16 +322,16 @@ def state_error():
     pass
     return "state_done"
 
-            
-angle = 0.0
 row_width = 0.75
 turn_l = np.pi/2
 turn_r = -np.pi/2
 lin_row_exit = 1.0
 lin_row_enter = lin_row_exit
 state = "state_in_row"
-alpha_old = 0.0
-alpha_new = 0.0
+theta = 0.0
+ydist = 0.0
+theta_valid = 0.0
+ydist_valid = 0.0
 
 if __name__ == '__main__':
     rospy.init_node('path_planning', anonymous=True)
