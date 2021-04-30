@@ -87,14 +87,14 @@ def laser_callback(scan):
             # at the end of the row, 'nan' may be assigned to theta
             # in such a case the previous theta will not be updated
             theta_valid = theta
+        else:
+            theta_valid = 0
         tol_degrees = 10 # [degrees] when determining theta, we will look for angles +- this angle around theta_old
         tol_degrees_bins = np.round(np.radians(tol_degrees) / bin_res)
         theta_hist_idx = np.round((theta_valid + np.pi) / bin_res)
         indices_peak_theta = indices_peak(theta_hist_idx, tol_degrees_bins, n_bins_theta)
         # determine current angle of robot to the center line of corn row
-        print("---------------theta", theta_hist_idx, tol_degrees_bins, n_bins_theta)
         theta = mean_peak(indices_peak_theta, bin_counts, bin_edges, bin_res)
-        print("---------------theta", theta)
 
         # rotate scan around z by theta_new
         c, s = np.cos(-theta), np.sin(-theta)
@@ -126,14 +126,14 @@ def laser_callback(scan):
             # at the end of the row, 'nan' may be assigned to ydist
             # in such a case the previous ydist will not be updated
             ydist_valid = ydist
+        else:
+            ydist_valid = 0
         tol_ydist = 0.03 # [m]
         tol_ydist_bins = np.round(tol_ydist / bin_res) # [bins]
         ydist_max_idx = np.argmax(bin_counts)
         indices_peak_ydist = indices_peak(ydist_max_idx, tol_ydist_bins, n_bins_ydist)
         # determine current y-distance of robot to the center line of corn row
-        print("---------------ydist", ydist_max_idx, tol_ydist_bins, n_bins_ydist)
         ydist = mean_peak(indices_peak_ydist, bin_counts, bin_edges, bin_res)
-        print("---------------ydist", ydist)
         if ydist < 0:
             ydist += row_width/2
         else:
@@ -166,25 +166,20 @@ def mean_peak(indices_peak, bin_counts, bin_edges, bin_res):
     """
     bin_counts_peak = bin_counts[indices_peak]
     if sum(bin_counts_peak) <= 1e-16:
-        # if all bins befor, at and after the peak are empty,
+        # if all bins before, at and after the peak are empty,
         # we pretend the bin in the middle has one hit:
         # e.g. [0, 0, 0, 0, 0] --> [0, 0, 1, 0, 0]
         bin_counts_peak = np.zeros_like(bin_counts_peak)
         bin_counts_peak[bin_counts_peak.shape[0]//2] = 1
     bin_edges_peak = bin_edges[indices_peak] + bin_res / 2
-    """
-        RuntimeWarning: invalid value encountered in double_scalars
-        return np.sum(bin_counts_peak * bin_edges_peak) / np.sum(bin_counts_peak)
-    """
-    print("indices_peak", indices_peak)
-    print("bin_counts", bin_counts)
-    print("bin_edges", bin_edges)
-    print("bin_counts_peak", bin_counts_peak)
-    print("bin_edges_peak", bin_edges_peak)
     return np.sum(bin_counts_peak * bin_edges_peak) / np.sum(bin_counts_peak)
     
 def state_in_row(pub_vel):
     global row_width
+    global p_gain_theta_factor
+    global p_gain_ydist_factor
+    global velz_control
+
     setpoint_theta = 0;                         # [rad]
     setpoint_ydist = 0;                         # [m]
     error_theta = setpoint_theta - theta_valid
@@ -193,18 +188,20 @@ def state_in_row(pub_vel):
     max_angular_z = np.pi/2;                    # [rad/s]
     max_theta = np.pi/4;                        # [rad]
     max_ydist = row_width/2;                    # [m]
-    p_gain_theta = max_angular_z/max_theta;     # = 2.0
-    p_gain_ydist = max_angular_z/max_ydist*0.25;     # = 4.19
+    p_gain_theta = max_angular_z/max_theta*p_gain_theta_factor;     # = 2.0
+    p_gain_ydist = max_angular_z/max_ydist*p_gain_ydist_factor;     # = 4.19
 
     act_theta = p_gain_theta*error_theta
     act_ydist = -p_gain_ydist*error_ydist
     
     cmd_vel = Twist()
     cmd_vel.linear.x = 0.5
-    # cmd_vel.angular.z = 0.0
-    # cmd_vel.angular.z = act_theta
-    cmd_vel.angular.z = act_ydist
-    # cmd_vel.angular.z = act_theta/2 + act_ydist/2
+    if velz_control == "theta":
+        cmd_vel.angular.z = act_theta
+    elif velz_control == "ydist":
+        cmd_vel.angular.z = act_ydist
+    else:
+        cmd_vel.angular.z = act_theta/2 + act_ydist/2
 
     pub_vel.publish(cmd_vel)        
     # print(ydist_valid, act_ydist)
@@ -332,12 +329,19 @@ theta = 0.0
 ydist = 0.0
 theta_valid = 0.0
 ydist_valid = 0.0
+p_gain_theta_factor = 0.0
+p_gain_ydist_factor = 0.0
+velz_control = 0.0
 
 if __name__ == '__main__':
     rospy.init_node('path_planning', anonymous=True)
     sub_laser = rospy.Subscriber("front/scan", LaserScan, laser_callback)
     pub_vel = rospy.Publisher("cmd_vel", Twist, queue_size=1)
     rate = rospy.Rate(10)
+
+    p_gain_theta_factor = rospy.get_param('~p_gain_theta_factor')
+    p_gain_ydist_factor = rospy.get_param('~p_gain_ydist_factor')
+    velz_control = rospy.get_param('~velz_control')
     
     while not rospy.is_shutdown() and state != "done":
         if state == "state_in_row":
