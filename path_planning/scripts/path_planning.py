@@ -22,12 +22,36 @@ def scan2cart(scan, max_range=30.0):
     scan_cart = scan_cart[allow_ranges, :]
     return scan_cart
 
+def check_end_of_row(scan, angle_min, angle_max):
+    end_of_row = True
+    if scan.angle_min > angle_min:
+        angle_min = scan.angle_min
+    if scan.angle_max < angle_max:
+        angle_max = scan.angle_max
+    num_ranges = len(scan.ranges)
+    idx_lower = num_ranges/2 + int(np.round(angle_min / scan.angle_increment))
+    idx_upper = num_ranges/2 + int(np.round(angle_max / scan.angle_increment))
+    scan_extraction = scan.ranges[idx_lower:idx_upper]
+    sum_ranges_ign_inf = np.ma.masked_invalid(scan_extraction).sum()
+    if sum_ranges_ign_inf > 1.0:
+        end_of_row = False
+    # angles = np.linspace(angle_min, angle_max, idx_upper-idx_lower)
+    # x = scan_extraction*np.cos(angles)
+    # y = scan_extraction*np.sin(angles)
+    # scan_cart = np.array([x, y])
+    # scan_cart = np.transpose(scan_cart)
+    # plt.plot(scan_cart[:,0], scan_cart[:,1], "ob", label="end of row scan")
+    # plt.legend(loc='lower left')
+    # plt.show(block=True)
+    return end_of_row
+
 def laser_callback(scan):
     global theta
     global ydist
     global theta_valid
     global ydist_valid
     global row_width
+    global end_of_row
     if state == "state_in_row":
         # convert scan from polar into cartesian coordinates
         scan_cart = scan2cart(scan, max_range=30.0)
@@ -87,8 +111,8 @@ def laser_callback(scan):
             # at the end of the row, 'nan' may be assigned to theta
             # in such a case the previous theta will not be updated
             theta_valid = theta
-        else:
-            theta_valid = 0
+        # else:
+        #     theta_valid = 0.0
         tol_degrees = 10 # [degrees] when determining theta, we will look for angles +- this angle around theta_old
         tol_degrees_bins = np.round(np.radians(tol_degrees) / bin_res)
         theta_hist_idx = np.round((theta_valid + np.pi) / bin_res)
@@ -126,8 +150,8 @@ def laser_callback(scan):
             # at the end of the row, 'nan' may be assigned to ydist
             # in such a case the previous ydist will not be updated
             ydist_valid = ydist
-        else:
-            ydist_valid = 0
+        # else:
+        #     ydist_valid = 0.0
         tol_ydist = 0.03 # [m]
         tol_ydist_bins = np.round(tol_ydist / bin_res) # [bins]
         ydist_max_idx = np.argmax(bin_counts)
@@ -137,7 +161,9 @@ def laser_callback(scan):
         if ydist < 0:
             ydist += row_width/2
         else:
-            ydist -= row_width/2      
+            ydist -= row_width/2
+
+        end_of_row = check_end_of_row(scan, -np.pi/2, np.pi/2)      
     else:
         pass
 
@@ -165,20 +191,24 @@ def mean_peak(indices_peak, bin_counts, bin_edges, bin_res):
     param4 bin_res:         [*/bin] resolution of a bin of histogram 
     """
     bin_counts_peak = bin_counts[indices_peak]
+    bin_edges_peak = bin_edges[indices_peak] + bin_res / 2
+
     if sum(bin_counts_peak) <= 1e-16:
         # if all bins before, at and after the peak are empty,
         # we pretend the bin in the middle has one hit:
         # e.g. [0, 0, 0, 0, 0] --> [0, 0, 1, 0, 0]
         bin_counts_peak = np.zeros_like(bin_counts_peak)
         bin_counts_peak[bin_counts_peak.shape[0]//2] = 1
-    bin_edges_peak = bin_edges[indices_peak] + bin_res / 2
+
     return np.sum(bin_counts_peak * bin_edges_peak) / np.sum(bin_counts_peak)
     
 def state_in_row(pub_vel):
     global row_width
     global p_gain_theta_factor
     global p_gain_ydist_factor
-    global velz_control
+    global ctrl_by_theta
+    global ctrl_by_ydist
+    global end_of_row
 
     setpoint_theta = 0;                         # [rad]
     setpoint_ydist = 0;                         # [m]
@@ -195,10 +225,10 @@ def state_in_row(pub_vel):
     act_ydist = -p_gain_ydist*error_ydist
     
     cmd_vel = Twist()
-    cmd_vel.linear.x = 0.5
-    if velz_control == "theta":
+    cmd_vel.linear.x = 0.4
+    if ctrl_by_theta and not ctrl_by_ydist:
         cmd_vel.angular.z = act_theta
-    elif velz_control == "ydist":
+    elif ctrl_by_ydist and not ctrl_by_theta:
         cmd_vel.angular.z = act_ydist
     else:
         cmd_vel.angular.z = act_theta/2 + act_ydist/2
@@ -207,17 +237,42 @@ def state_in_row(pub_vel):
     # print(ydist_valid, act_ydist)
     # print(theta_valid, act_theta)
 
-    if np.isnan(theta) and np.isnan(ydist):
-        return "state_headland"
+    if end_of_row:
+        return "state_turn_to_next_row"
     else:
         return "state_in_row"
 
-def state_headland():
+def tf_point_to_center_line(theta, ydist, x, y, gamma):
+    """
+    The Robot has finished a row and the last angle and distance
+    to the center line has been theta and ydist respectively.
+    This function transforms the position of a point lying in 
+    a frame with its x-axis at the center line to the robot
+    base_link frame.
+    inputs:
+    param1 theta:   the angle of center line to robot frame x-axis
+    param2 ydist:   the perpendicular distance between center line and robot frame origin
+    param3 x:       the desired distance in x-direction (on center line)
+    param4 y:       the desired distance in y-direction (perpedicular to center line)
+    param5 gamma:   the desired orientation counter clockwise (from center line)
+    outputs:
+    x_new:          the x-coordinate in robot frame
+    y_new:          the y-coordinate in robot frame
+    gamma_new:      the orientation in robot frame
+    """
+    x_new = x*np.cos(theta) + y*np.sin(theta) - ydist*np.sin(theta)
+    y_new = -x*np.sin(theta) + y*np.cos(theta) - ydist*np.cos(theta)
+    gamma_new = gamma - theta
+    return (x_new, y_new, gamma_new)
+
+def state_turn_to_next_row():
     global row_width
     global lin_row_enter
     global lin_row_exit
     global turn_l
     global turn_r
+    global theta_valid
+    global ydist_valid
 
     path_pattern = rospy.get_param('~path_pattern')
     path_pattern = path_pattern.replace("-", "")
@@ -234,7 +289,10 @@ def state_headland():
             rospy.logerr("Path pattern syntax error: undefined parameter '%s' for turn specification!", which_turn)
             return "error"
 
-        result_straight = movebase_client(lin_row_exit/2, 0.0, 0.0)
+        point = tf_point_to_center_line(theta_valid, ydist_valid, lin_row_exit/2, 0.0, 0.0)
+        print(np.degrees(theta_valid), ydist_valid)
+        print(point[0], point[1], np.degrees(point[2]))
+        result_straight = movebase_client(point[0], point[1], point[2])
         if result_straight:
             rospy.logwarn("1. Straight goal execution done!")
         else:
@@ -331,7 +389,9 @@ theta_valid = 0.0
 ydist_valid = 0.0
 p_gain_theta_factor = 0.0
 p_gain_ydist_factor = 0.0
-velz_control = 0.0
+ctrl_by_theta = True
+ctrl_by_ydist = True
+end_of_row = False
 
 if __name__ == '__main__':
     rospy.init_node('path_planning', anonymous=True)
@@ -341,13 +401,14 @@ if __name__ == '__main__':
 
     p_gain_theta_factor = rospy.get_param('~p_gain_theta_factor')
     p_gain_ydist_factor = rospy.get_param('~p_gain_ydist_factor')
-    velz_control = rospy.get_param('~velz_control')
+    ctrl_by_theta = rospy.get_param('~ctrl_by_theta')
+    ctrl_by_ydist = rospy.get_param('~ctrl_by_ydist')
     
     while not rospy.is_shutdown() and state != "done":
         if state == "state_in_row":
             state = state_in_row(pub_vel)
-        elif state == "state_headland":
-            state = state_headland()
+        elif state == "state_turn_to_next_row":
+            state = state_turn_to_next_row()
         elif state == "state_idle":
             state = state_idle()
         elif state == "error":
