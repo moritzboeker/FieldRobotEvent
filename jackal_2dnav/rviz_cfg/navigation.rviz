@@ -184,11 +184,11 @@ Visualization Manager:
         front_laser_mount:
           Value: false
         front_left_wheel_link:
-          Value: false
+          Value: true
         front_mount:
           Value: false
         front_right_wheel_link:
-          Value: false
+          Value: true
         imu_link:
           Value: false
         map:
@@ -202,11 +202,11 @@ Visualization Manager:
         rear_fender_link:
           Value: false
         rear_left_wheel_link:
-          Value: false
+          Value: true
         rear_mount:
           Value: false
         rear_right_wheel_link:
-          Value: false
+          Value: true
       Marker Scale: 1
       Name: TF
       Show Arrows: true

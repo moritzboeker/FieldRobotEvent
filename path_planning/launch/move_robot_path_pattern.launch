@@ -7,5 +7,6 @@
     <param name="p_gain_ydist_factor" value="0.3" />
     <param name="ctrl_by_theta" value="True" />
     <param name="ctrl_by_ydist" value="True" />
+    <param name="max_lin_vel" value="0.5" />
    </node>
 </launch>
