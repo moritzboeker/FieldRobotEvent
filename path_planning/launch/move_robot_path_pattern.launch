@@ -2,7 +2,7 @@
    <master auto="start"/>
  <!-- Run node to send goals -->
    <node pkg="path_planning" type="path_planning.py" name="path_planning" output="screen" >
-    <param name="path_pattern" value="S-1L-2L-1L-1R-F" />
+    <param name="path_pattern" value="S-1L-2L-2L-2L-1L-1R-2R-2R-2R-F" />
     <param name="p_gain_theta_factor" value="1.0" />
     <param name="p_gain_ydist_factor" value="0.3" />
     <param name="ctrl_by_theta" value="True" />

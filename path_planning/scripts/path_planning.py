@@ -252,7 +252,6 @@ def state_in_row(pub_vel):
     global max_lin_vel
     global end_of_row
     global time_start
-    global this_is_first_turn
 
     setpoint_theta = 0;                         # [rad]
     setpoint_ydist = 0;                         # [m]
@@ -288,20 +287,19 @@ def state_in_row(pub_vel):
     # print(ydist_valid, act_ydist)
     # print(theta_valid, act_theta)
     if end_of_row:
-        this_is_first_turn = True
         time_start = rospy.Time.now()
         print("theta_valid", np.degrees(theta_valid), "ydist_valid", ydist_valid)
-        return "state_turn"
+        # return "state_turn_exit_row"
+        return "state_turn_to_next_row"
     else:
         return "state_in_row"
 
-def state_turn(pub_vel):
+def state_turn_exit_row(pub_vel):
     global path_pattern
     global row_width
     global turn_l
     global turn_r  
     global time_start
-    global this_is_first_turn
     global theta_valid
     global ydist_valid
 
@@ -317,23 +315,25 @@ def state_turn(pub_vel):
             rospy.logerr("Path pattern syntax error: undefined parameter '%s' for turn specification!", which_turn)
             return "state_error"
         
-        t = 2.0; # [s]
-        radius = row_width/2 - ydist_valid # [m]
+        t = 3.0; # [s]
+        radius = (row_width - ydist_valid) / 2 # [m]
         angle = turn - theta_valid # [rad]
         cmd_vel = Twist()
         cmd_vel.linear.x = radius * abs(angle) / t
         cmd_vel.angular.z = angle / t
         pub_vel.publish(cmd_vel)
         print(np.degrees(angle), radius, rospy.Time.now() - time_start, rospy.Duration.from_sec(t), rospy.Time.now() - time_start > rospy.Duration.from_sec(t))
-        if rospy.Time.now() - time_start > rospy.Duration.from_sec(t):
-            if this_is_first_turn:
-                return "state_go_straight"
+        if rospy.Time.now() - time_start > rospy.Duration.from_sec(t):            
+            # if the robot is to enter one of the neighbouring rows
+            # it skips the state of moving a straight distance
+            which_row = int(path_pattern[0])
+            if which_row == 1:
+                time_start = rospy.Time.now()
+                return "state_turn_enter_row"
             else:
-                # remove executed turn from path pattern
-                path_pattern = path_pattern[2::]
-                return "state_in_row"
+                return "state_go_straight"
         else:
-            return "state_turn"
+            return "state_turn_exit_row"
     else:
         return "state_done"
 
@@ -341,7 +341,6 @@ def state_go_straight():
     global path_pattern
     global row_width
     global time_start
-    global this_is_first_turn
 
     # extract straight distance from path pattern
     which_row = int(path_pattern[0])
@@ -349,125 +348,148 @@ def state_go_straight():
     distance_y = 0.0
     angle = 0.0
     
-    # if the robot is to enter one of the neighbouring rows
-    # it does not neet to move a certain straight distance
-    if which_row == 1:
-        this_is_first_turn = False
-        time_start = rospy.Time.now()
-        return "state_turn"
-
     # but if the robot is to enter another row,
     # it firstly needs to drive to that row before turning into it
     result_straight = movebase_client(distance_x, distance_y, angle)
     if result_straight:
         rospy.logwarn("Straight goal execution done!")
-        this_is_first_turn = False
         time_start = rospy.Time.now()
-        return "state_turn"
+        return "state_turn_enter_row"
     else:
         rospy.logerr("Straight goal not reached!")
         return "state_error"
 
-# def tf_point_to_center_line(theta, ydist, x, y, gamma):
-#     """
-#     The Robot has finished a row and the last angle and distance
-#     to the center line has been theta and ydist respectively.
-#     This function transforms the position of a point lying in 
-#     a frame with its x-axis at the center line to the robot
-#     base_link frame.
-#     inputs:
-#     param1 theta:   the angle of center line to robot frame x-axis
-#     param2 ydist:   the perpendicular distance between center line and robot frame origin
-#     param3 x:       the desired distance in x-direction (on center line)
-#     param4 y:       the desired distance in y-direction (perpedicular to center line)
-#     param5 gamma:   the desired orientation counter clockwise (from center line)
-#     outputs:
-#     x_new:          the x-coordinate in robot frame
-#     y_new:          the y-coordinate in robot frame
-#     gamma_new:      the orientation in robot frame
-#     """
-#     x_new = x*np.cos(theta) + y*np.sin(theta) - ydist*np.sin(theta)
-#     y_new = -x*np.sin(theta) + y*np.cos(theta) - ydist*np.cos(theta)
-#     gamma_new = gamma - theta
-#     return (x_new, y_new, gamma_new)
+def state_turn_enter_row(pub_vel):
+    global path_pattern
+    global row_width
+    global turn_l
+    global turn_r  
+    global time_start
 
-# def state_turn_to_next_row():
-#     global row_width
-#     global lin_row_enter
-#     global lin_row_exit
-#     global turn_l
-#     global turn_r
-#     global theta_valid
-#     global ydist_valid
-
-#     path_pattern = rospy.get_param('~path_pattern')
-#     path_pattern = path_pattern.replace("-", "")
-#     path_pattern = path_pattern[1:-1]
-
-#     if len(path_pattern) > 0:
-#         which_row = path_pattern[0]
-#         which_turn = path_pattern[1]
-#         if which_turn == 'L':
-#             turn = turn_l
-#         elif which_turn == 'R':
-#             turn = turn_r
-#         else:
-#             rospy.logerr("Path pattern syntax error: undefined parameter '%s' for turn specification!", which_turn)
-#             return "error"
-
-#         point = tf_point_to_center_line(theta_valid, ydist_valid, lin_row_exit/2, 0.0, 0.0)
-#         result_straight = movebase_client(point[0], point[1], point[2])
-#         if result_straight:
-#             rospy.logwarn("1. Straight goal execution done!")
-#         else:
-#             rospy.logerr("1. Straight goal not reached!")
-#             return "error"
+    if len(path_pattern) > 0:
+        # extract next turn from path pattern
+        # and check direction ('L' or 'R' ?)
+        which_turn = path_pattern[1]
+        if which_turn == 'L':
+            turn = turn_l
+        elif which_turn == 'R':
+            turn = turn_r
+        else:
+            rospy.logerr("Path pattern syntax error: undefined parameter '%s' for turn specification!", which_turn)
+            return "state_error"
         
-#         result_turn = movebase_client(lin_row_exit, row_width/2, turn)
-#         if result_turn:
-#             rospy.logwarn("2. Turn goal execution done!")
-#         else:
-#             rospy.logerr("2. Turn goal not reached!")
-#             return "error"
+        t = 3.0; # [s]
+        radius = row_width/2 # [m]
+        angle = turn # [rad]
+        cmd_vel = Twist()
+        cmd_vel.linear.x = radius * abs(angle) / t
+        cmd_vel.angular.z = angle / t
+        pub_vel.publish(cmd_vel)
+        print(radius * abs(angle) / t, np.degrees(angle / t))
+        # print(np.degrees(angle), radius, rospy.Time.now() - time_start, rospy.Duration.from_sec(t), rospy.Time.now() - time_start > rospy.Duration.from_sec(t))
+        if rospy.Time.now() - time_start > rospy.Duration.from_sec(t):                
+                return "state_crop_path_pattern"
+        else:
+            return "state_turn_enter_row"
+    else:
+        return "state_done"
 
-#         try:
-#             which_row = int(which_row)
-#         except ValueError:
-#             rospy.logerr("Path pattern syntax error: non-integer value for row specification!")
-#             return "error"
+def state_crop_path_pattern():
+    global path_pattern
+    # remove executed turn from path pattern
+    path_pattern = path_pattern[2::]
+    return "state_in_row"
 
-#         if which_row > 1:
-#             result_straight = movebase_client((which_row-1)*row_width, 0.0, 0.0)
-#             if result_straight:
-#                 rospy.logwarn("3.1 Straight goal execution done!")
-#             else:
-#                 rospy.logerr("3.1 Straight goal not reached!")
-#                 return "error"
+def tf_point_to_center_line(theta, ydist, x, y, gamma):
+    """
+    The Robot has finished a row and the last angle and distance
+    to the center line has been theta and ydist respectively.
+    This function transforms the position of a point lying in 
+    a frame with its x-axis at the center line to the robot
+    base_link frame.
+    inputs:
+    param1 theta:   the angle of center line to robot frame x-axis
+    param2 ydist:   the perpendicular distance between center line and robot frame origin
+    param3 x:       the desired distance in x-direction (on center line)
+    param4 y:       the desired distance in y-direction (perpedicular to center line)
+    param5 gamma:   the desired orientation counter clockwise (from center line)
+    outputs:
+    x_new:          the x-coordinate in robot frame
+    y_new:          the y-coordinate in robot frame
+    gamma_new:      the orientation in robot frame
+    """
+    x_new = x*np.cos(theta) + y*np.sin(theta) - ydist*np.sin(theta)
+    y_new = -x*np.sin(theta) + y*np.cos(theta) - ydist*np.cos(theta)
+    gamma_new = gamma - theta
+    return (x_new, y_new, gamma_new)
 
-#         result_turn = movebase_client(0.0, 0.0, turn/2)
-#         if result_turn:
-#             rospy.logwarn("3.2 Turn goal execution done!")
-#         else:
-#             rospy.logerr("3.2 Turn goal not reached!")
-#             return "error"
+def state_turn_to_next_row():
+    global path_pattern
+    global row_width
+    global theta_valid
+    global ydist_valid
+    lin_row_enter = 1.0     # [m]
+    lin_row_exit = 1.0      # [m]
+    turn_l = np.pi/2        # [rad]
+    turn_r = -np.pi/2       # [rad]
 
-#         result_turn = movebase_client(lin_row_enter, row_width/2-0.1, turn/2)
-#         if result_turn:
-#             rospy.logwarn("4. Turn goal execution done!")
-#         else:
-#             rospy.logerr("4. Turn goal not reached!")
-#             return "error"
+    if len(path_pattern) > 0:
+        which_row = path_pattern[0]
+        which_turn = path_pattern[1]
 
-#         result_straight = movebase_client(lin_row_enter/2, 0.0, 0.0)
-#         if result_straight:
-#             rospy.logwarn("5. Straight goal execution done!")
-#         else:
-#             rospy.logerr("5. Straight goal not reached!")
-#             return "error"
+        if which_turn == 'L':
+            turn = turn_l
+        elif which_turn == 'R':
+            turn = turn_r
+        else:
+            rospy.logerr("Path pattern syntax error: undefined parameter '%s' for turn specification!", which_turn)
+            return "error"
 
-#         return "state_in_row"
-#     else:
-#         return "done"
+        try:
+            which_row = int(which_row)
+        except ValueError:
+            rospy.logerr("Path pattern syntax error: non-integer value for row specification!")
+            return "state_error"
+
+        point = tf_point_to_center_line(theta_valid, ydist_valid, lin_row_exit, 0.0, 0.0)
+        result_straight = movebase_client(point[0], point[1], point[2])
+        if result_straight:
+            rospy.logwarn("1. Straight goal execution done!")
+        else:
+            rospy.logerr("1. Straight goal not reached!")
+            return "state_error"
+        
+        result_turn = movebase_client(0, 0, turn)
+        if result_turn:
+            rospy.logwarn("2. In-place-turn goal execution done!")
+        else:
+            rospy.logerr("2. In-place-turn goal not reached!")
+            return "state_error"
+
+        result_straight = movebase_client(which_row*row_width, 0.0, 0.0)
+        if result_straight:
+            rospy.logwarn("3. Straight goal execution done!")
+        else:
+            rospy.logerr("3. Straight goal not reached!")
+            return "state_error"
+
+        result_turn = movebase_client(0.0, 0.0, turn)
+        if result_turn:
+            rospy.logwarn("4. In-place-turn goal execution done!")
+        else:
+            rospy.logerr("4. In-place-turn goal not reached!")
+            return "state_error"
+
+        result_straight = movebase_client(lin_row_enter, 0, 0)
+        if result_straight:
+            rospy.logwarn("5. Straight goal execution done!")
+        else:
+            rospy.logerr("5. Straight goal not reached!")
+            return "state_error"
+
+        return "state_crop_path_pattern"
+    else:
+        return "state_done"
 
 def movebase_client(lin_x, lin_y, ang_z):
     client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
@@ -504,8 +526,6 @@ def state_error():
 row_width = 0.75
 turn_l = np.pi/2
 turn_r = -np.pi/2
-lin_row_exit = 1.0
-lin_row_enter = lin_row_exit
 state = "state_in_row"
 theta = 0.0
 ydist = 0.0
@@ -520,7 +540,6 @@ end_of_row = False
 end_row_ctr = 0
 path_pattern = ""
 time_start = 0.0
-this_is_first_turn = True
 
 if __name__ == '__main__':
     rospy.init_node('path_planning', anonymous=True)
@@ -541,10 +560,16 @@ if __name__ == '__main__':
     while not rospy.is_shutdown() and state != "state_done":
         if state == "state_in_row":
             state = state_in_row(pub_vel)
-        elif state == "state_turn":
-            state = state_turn(pub_vel)
+        elif state == "state_turn_exit_row":
+            state = state_turn_exit_row(pub_vel)
         elif state == "state_go_straight":
             state = state_go_straight()
+        elif state == "state_turn_enter_row":
+            state = state_turn_enter_row(pub_vel)
+        elif state == "state_turn_to_next_row":
+            state = state_turn_to_next_row()
+        elif state == "state_crop_path_pattern":
+            state = state_crop_path_pattern()
         elif state == "state_idle":
             state = state_idle()
         elif state == "state_error":
