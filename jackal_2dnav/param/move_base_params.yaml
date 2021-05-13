@@ -1,2 +1,2 @@
-base_global_planner: "carrot_planner/CarrotPlanner" # or: global_planner/GlobalPlanner, carrot_planner/CarrotPlanner, navfn/NavfnROS, moritz_planner/MoritzPlanner
+base_global_planner: "carrot_planner/CarrotPlanner" # or: global_planner/GlobalPlanner, carrot_planner/CarrotPlanner, moritz_planner/MoritzPlanner
 base_local_planner: "dwa_local_planner/DWAPlannerROS" # or: dwa_local_planner/DWAPlannerROS, base_local_planner/TrajectoryPlannerROS
