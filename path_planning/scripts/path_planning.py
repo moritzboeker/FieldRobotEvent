@@ -129,10 +129,10 @@ def laser_callback(scan):
     global ydist_valid
     global row_width
     global end_of_row
+    global xy_coords
     if state == "state_in_row":
         # convert scan from polar into cartesian coordinates
         scan_cart = scan2cart(scan, max_range=30.0)
-
         # determine euclidean distance between each subsequent scan point
         x_dist_scan = np.diff(scan_cart[:, 0])
         y_dist_scan = np.diff(scan_cart[:, 1])
@@ -151,13 +151,6 @@ def laser_callback(scan):
                 mean_position = np.nanmean(plant, axis=0)
                 plants_all.append(mean_position)
         plants_all = np.array(plants_all)
-        # # PLOT XY-SCATTER
-        # # of cartesian scan and mean position of detected plants
-        # plt.figure()
-        # plt.plot(scan_cart[:,0], scan_cart[:,1], "ob", label="cartesian laser scan")
-        # plt.plot(plants_all[:,0], plants_all[:,1], "xr", label="averaged plant position with at least 3 laser points")
-        # plt.legend(loc='lower left')
-        # plt.show(block=True)
 
         # calculate line angles from one plant to another
         x_dist_plant = np.diff(plants_all[:, 0])
@@ -201,12 +194,7 @@ def laser_callback(scan):
         c, s = np.cos(-theta), np.sin(-theta)
         rot_z = np.array(((c, -s), (s, c)))
         scan_cart_rot = np.matmul(scan_cart, rot_z)
-        # # PLOT XY-SCATTER
-        # # of rotated cartesian scan
-        # plt.figure()
-        # plt.plot(scan_cart_rot[:,0], scan_cart_rot[:,1], "ob", label="rotated cartesian laser scan")
-        # plt.legend(loc='lower left')
-        # plt.show(block=True)
+        xy_coords = scan_cart_rot
 
         # apply a histogram to y-distances of rotated scan
         range_min_ydist = -row_width # [m]
@@ -267,15 +255,16 @@ def state_in_row(pub_vel):
     act_theta = p_gain_theta*error_theta
     act_ydist = -p_gain_ydist*error_ydist
     
-    normed_theta_abs = np.abs(theta_valid / max_theta)
-    normed_ydist_abs = np.abs(ydist_valid / max_ydist)
-    normed_theta_abs = clip(normed_theta_abs, 1.0, 0.0)
-    normed_ydist_abs = clip(normed_ydist_abs, 1.0, 0.0)
-    normed_deviation = (normed_theta_abs + normed_ydist_abs) / 2
+    # normed_theta_abs = np.abs(theta_valid / max_theta)
+    # normed_ydist_abs = np.abs(ydist_valid / max_ydist)
+    # normed_theta_abs = clip(normed_theta_abs, 1.0, 0.0)
+    # normed_ydist_abs = clip(normed_ydist_abs, 1.0, 0.0)
+    # normed_deviation = (normed_theta_abs + normed_ydist_abs) / 2
     cmd_vel = Twist()
-    cmd_vel.linear.x = max_lin_vel * (normed_deviation - 1)**2
-    np.set_printoptions(precision=1)
-    print('{:6.2f}, {:6.2f}, {:6.2f}, {:6.2f}'.format(normed_theta_abs, normed_ydist_abs, normed_deviation, max_lin_vel * (1 - normed_deviation)))
+    # cmd_vel.linear.x = max_lin_vel * (normed_deviation - 1)**2
+    cmd_vel.linear.x = 0.3
+    # np.set_printoptions(precision=1)
+    # print('{:6.2f}, {:6.2f}, {:6.2f}, {:6.2f}'.format(normed_theta_abs, normed_ydist_abs, normed_deviation, max_lin_vel * (1 - normed_deviation)))
     if ctrl_by_theta and not ctrl_by_ydist:
         cmd_vel.angular.z = act_theta
     elif ctrl_by_ydist and not ctrl_by_theta:
@@ -540,6 +529,7 @@ end_of_row = False
 end_row_ctr = 0
 path_pattern = ""
 time_start = 0.0
+xy_coords = np.zeros((10,2))
 
 if __name__ == '__main__':
     rospy.init_node('path_planning', anonymous=True)
@@ -556,7 +546,8 @@ if __name__ == '__main__':
     ctrl_by_theta = rospy.get_param('~ctrl_by_theta')
     ctrl_by_ydist = rospy.get_param('~ctrl_by_ydist')
     max_lin_vel = rospy.get_param('~max_lin_vel')
-    
+
+    fig = plt.figure()
     while not rospy.is_shutdown() and state != "state_done":
         if state == "state_in_row":
             state = state_in_row(pub_vel)
@@ -576,7 +567,11 @@ if __name__ == '__main__':
             state = state_error()
         else:
             state = "state_done"
-
         print(state)
+
+        plt.plot(xy_coords[:,0], xy_coords[:,1], "ob", label="scatter")
+        plt.draw()
+        plt.pause(0.05)
+        fig.clear()        
         
         rate.sleep()
