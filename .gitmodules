@@ -1,3 +1,6 @@
 [submodule "Virtual_Field_Robot_Event"]
 	path = Virtual_Field_Robot_Event
 	url = https://github.com/FieldRobotEvent/Virtual_Field_Robot_Event.git
+[submodule "/home/emanuel/fre_ws/src/Virtual_Robot_Event"]
+	path = /home/emanuel/fre_ws/src/Virtual_Robot_Event
+	url = https://github.com/FieldRobotEvent/Virtual_Field_Robot_Event
