@@ -3,8 +3,8 @@
  <!-- Run node to send goals -->
    <node pkg="path_planning" type="path_planning.py" name="path_planning" output="screen" >
     <param name="path_pattern" value="S-1L-1R-1L-F" />
-    <param name="p_gain_angle_factor" value="0.5" />
-    <param name="p_gain_offset_factor" value="0.4" />
+    <param name="p_gain_angle_factor" value="0.4" />
+    <param name="p_gain_offset_factor" value="0.3" />
     <param name="ctrl_by_angle" value="True" />
     <param name="ctrl_by_offset" value="True" />
     <param name="max_lin_vel" value="0.5" />

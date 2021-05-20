@@ -199,7 +199,7 @@ def state_turn_exit_row(pub_vel):
         cmd_vel.angular.z = angle / t
         pub_vel.publish(cmd_vel)
         print(np.degrees(angle), radius, rospy.Time.now() - time_start, rospy.Duration.from_sec(t), rospy.Time.now() - time_start > rospy.Duration.from_sec(t))
-        if rospy.Time.now() - time_start >= rospy.Duration.from_sec(t):            
+        if rospy.Time.now() - time_start > rospy.Duration.from_sec(t):            
             # if the robot is to enter one of the neighbouring rows
             # it skips the state of moving a straight distance
             which_row = int(path_pattern[0])
@@ -262,7 +262,7 @@ def state_turn_enter_row(pub_vel):
         cmd_vel.angular.z = angle / t
         pub_vel.publish(cmd_vel)
         print(np.degrees(angle), radius, rospy.Time.now() - time_start, rospy.Duration.from_sec(t), rospy.Time.now() - time_start > rospy.Duration.from_sec(t))
-        if rospy.Time.now() - time_start >= rospy.Duration.from_sec(t):                
+        if rospy.Time.now() - time_start > rospy.Duration.from_sec(t):                
                 return "state_crop_path_pattern"
         else:
             return "state_turn_enter_row"
