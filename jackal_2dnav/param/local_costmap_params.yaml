@@ -1,10 +1,30 @@
 local_costmap:
   global_frame: map
   robot_base_frame: base_link
-  update_frequency: 5.0 # The frequency in Hz for the map to be updated. 
-  publish_frequency: 2.0
+  update_frequency: 5.0 # [Hz]
+  publish_frequency: 2.0 # [Hz]
   static_map: false # true --> intialize costmap based on a map served by the map_server
   rolling_window: true # true --> costmap will remain centered around the robot as the robot moves through the world
   width: 5.0 # The width of the map in meters. 
   height: 5.0 # The height of the map in meters. 
   resolution: 0.05 # The resolution of the map in meters/cell.
+
+  plugins:
+    - {name: obstacle_layer, type: "costmap_2d::ObstacleLayer"}
+    - {name: inflation_layer, type: "costmap_2d::InflationLayer"}
+  obstacle_layer:
+      observation_sources: laser_scan_sensor
+      laser_scan_sensor: {sensor_frame: front_laser, data_type: LaserScan, topic: /front/scan, marking: true, clearing: true, expected_update_rate: 0.2, inf_is_valid: true}
+      track_unknown_space: true
+      footprint_clearing_enabled: true
+      combination_method: 1 # "Overwrite" (0), "Maximum" (1) and "Nothing" (99)
+  #    origin_z: 0.0 # The z origin of the map in meters.
+  #    z_resolution: 0.05 # The z resolution of the map in meters/cell.
+  #    z_voxels: 10 # The number of voxels in each vertical column, the height of the grid is z resolution * z voxels.
+  #    unknown_threshold: 10 # The number of unknown cells allowed in a column considered to be ”known”
+  #    mark_threshold: 0 # The maximum number of marked cells allowed in a column considered to be ”free”
+  #    publish_voxel_map: false
+  inflation_layer:
+      inflation_radius: 0.4 # = gap corn row / 2, so that robot runs in the very center of the row
+      cost_scaling_factor: 12.0 # the higher, the quicker the exp. cost function declines
+      inflate_unknown: false # inflate cells whose type is neither occupied nor free

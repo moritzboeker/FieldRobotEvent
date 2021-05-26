@@ -9,7 +9,7 @@ Panels:
         - /TF1/Frames1
         - /LaserScan1
       Splitter Ratio: 0.5
-    Tree Height: 199
+    Tree Height: 364
   - Class: rviz/Selection
     Name: Selection
   - Class: rviz/Tool Properties
@@ -342,4 +342,4 @@ Window Geometry:
     collapsed: true
   Width: 1155
   X: 72
-  Y: 554
+  Y: 553

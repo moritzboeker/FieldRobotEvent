@@ -1,42 +1,39 @@
 DWAPlannerROS: 
     acc_lim_x: 2.5 # (double, default: 2.5) The x acceleration limit of the robot in meters/sec^2 
-    acc_lim_y: 2.5 # (double, default: 2.5) The y acceleration limit of the robot in meters/sec^2 
-    acc_lim_th: 1.6 # (double, default: 3.2) The rotational acceleration limit of the robot in radians/sec^2 
+    acc_lim_y: 0.0 # (double, default: 2.5) The y acceleration limit of the robot in meters/sec^2 
+    acc_lim_th: 0.45 # (double, default: 3.2) The rotational acceleration limit of the robot in radians/sec^2 
 
-    max_vel_trans: 0.55 # (double, default: 0.55) The absolute value of the maximum translational velocity for the robot in m/s 
-    min_vel_trans: 0.05 # (double, default: 0.1) The absolute value of the minimum translational velocity for the robot in m/s 
+    max_vel_trans: 0.4 # (double, default: 0.55) The absolute value of the maximum translational velocity for the robot in m/s 
+    min_vel_trans: 0.4 # (double, default: 0.1) The absolute value of the minimum translational velocity for the robot in m/s 
 
-    max_vel_x: 0.55 # (double, default: 0.55) The maximum x velocity for the robot in m/s. 
-    min_vel_x: -0.55 # (double, default: 0.0) The minimum x velocity for the robot in m/s, negative for backwards motion. 
+    max_vel_x: 0.4 # (double, default: 0.55) The maximum x velocity for the robot in m/s. 
+    min_vel_x: -0.4 # (double, default: 0.0) The minimum x velocity for the robot in m/s, negative for backwards motion. 
 
     max_vel_y: 0.0 # (double, default: 0.1) The maximum y velocity for the robot in m/s 
     min_vel_y: 0.0 # (double, default: -0.1) The minimum y velocity for the robot in m/s 
 
-    max_vel_theta: 1.0 # (double, default: 1.0) The absolute value of the maximum rotational velocity for the robot in radians/sec 
-    min_vel_theta: 0.1 # (double, default: 0.4) The absolute value of the minimum rotational velocity for the robot in radians/sec
+    max_vel_theta: 0.75 # (double, default: 1.0) The absolute value of the maximum rotational velocity for the robot in radians/sec 
+    min_vel_theta: 0.75 # (double, default: 0.4) The absolute value of the minimum rotational velocity for the robot in radians/sec
+    
+    sim_time: 4.0 # (double, default: 1.7) The amount of time to roll trajectories out for in seconds 
+    vx_samples: 20 # (integer, default: 3) The number of samples to use when exploring the x velocity space and to do the forward simulation on
+    vy_samples: 1 # (integer, default: 10) The number of samples to use when exploring the y velocity space and to do the forward simulation on
+    vth_samples: 40 # (integer, default: 20) The number of samples to use when exploring the theta velocity space and to do the forward simulation on
 
-    yaw_goal_tolerance: 0.05 # (double, default: 0.05) The tolerance in radians for the controller in yaw/rotation when achieving its goal 
-    xy_goal_tolerance: 0.10 # (double, default: 0.10) The tolerance in meters for the controller in the x & y distance when achieving a goal 
-    latch_xy_goal_tolerance: false # (bool, default: false) If goal tolerance is latched, if the robot ever reaches the goal xy location it will simply rotate in place, even if it ends up outside the goal tolerance while it is doing so.
-
-    sim_time: 1.7 # (double, default: 1.7) The amount of time to roll trajectories out for in seconds 
     sim_granularity: 0.025 # (double, default: 0.025) The granularity with which to check for collisions along each trajectory in meters
     angular_sim_granularity: 0.1 # (double, default: 0.1) The granularity with which to check for collisions for rotations in radians 
-    vx_samples: 8 # (integer, default: 3) The number of samples to use when exploring the x velocity space 
-    vy_samples: 10 # (integer, default: 10) The number of samples to use when exploring the y velocity space
-    vth_samples: 20 # (integer, default: 20) The number of samples to use when exploring the theta velocity space 	
-    use_dwa: True # (bool, default: True) Use dynamic window approach to constrain sampling velocities to small window.
-    controller_frequency: 20.0 # (double, default: 20.0) The frequency at which this controller will be called in Hz.
 
-    path_distance_bias: 0.01 # (double, default: 0.6) The weight for the path distance part of the cost function
-    goal_distance_bias: 1.0 # (double, default: 0.8) The weight for the goal distance part of the cost function 
-    occdist_scale: 0.01 # (double, default: 0.01) The weight for the obstacle distance part of the cost function
+    path_distance_bias: 32.0 # (double, default: 32.0) The weight for how much the local planner should stay close to the global path: the higher the value, the more the local planner will prefer trajectories on the global path
+    goal_distance_bias: 20.0 # (double, default: 24.0) The weight for how much the robot should attempt to reach the local goal with whatever path: the higher the value, the less the robot is attached to the global path
+    occdist_scale: 0.02 # (double, default: 0.01) The weight for how much the robot should attempt to avoid obstacles: the higher the value, the more the robot is indecisive and stucks in place
     twirling_scale: 0.0 # (double, default: 0.0) The weight for penalizing any changes in robot heading
 
-# pdist_scale_ = resolution * config.path_distance_bias; 	// pdist_scale_ = 0.05 m * 0.6 = 0.03
-# gdist_scale_ = resolution * config.goal_distance_bias;	// gdist_scale_ = 0.05 m * 0.8 = 0.04
-# occdist_scale_ = config.occdist_scale;			// occdist_scale_ = 0.01
-# total_cost = pdist_scale_ * path_cost + gdist_scale_ * goal_cost + occdist_scale_ * occ_cost;
+    yaw_goal_tolerance: 0.10 # (double, default: 0.05) The tolerance in radians for the controller in yaw/rotation when achieving its goal 
+    xy_goal_tolerance: 0.10  # (double, default: 0.10) The tolerance in meters for the controller in the x & y distance when achieving a goal 
+    latch_xy_goal_tolerance: true # (bool, default: false) If goal tolerance is latched, if the robot ever reaches the goal xy location it will simply rotate in place, even if it ends up outside the goal tolerance while it is doing so.
+    
+    use_dwa: false # (bool, default: true) Use dynamic window approach to constrain sampling velocities to small window.
+    controller_frequency: 20.0 # (double, default: 20.0) The frequency at which this controller will be called in Hz.
 
     forward_point_distance: 0.325 # (double, default: 0.325) The distance from the center point of the robot to place an additional scoring point, in meters 
     stop_time_buffer: 0.2 # (double, default: 0.2) The amount of time that the robot must stop before a collision in order for a trajectory to be considered valid in seconds 
