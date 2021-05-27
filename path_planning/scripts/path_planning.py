@@ -189,22 +189,18 @@ def state_turn_exit_row(pub_vel):
             rospy.logerr("Path pattern syntax error: undefined parameter '%s' for turn specification!", which_turn)
             return "state_error"
         
-        t = 5.0; # [s]
+        ang_z = turn - angle_valid              # [rad]
         radius = (row_width - offset_valid) / 2 # [m]
-        angle = turn - angle_valid # [rad]
-        radius = row_width / 2
-        angle = turn
-        cmd_vel = Twist()
-        cmd_vel.linear.x = radius * abs(angle) / t
-        cmd_vel.angular.z = angle / t
-        pub_vel.publish(cmd_vel)
-        print(np.degrees(angle), radius, rospy.Time.now() - time_start, rospy.Duration.from_sec(t), rospy.Time.now() - time_start > rospy.Duration.from_sec(t))
+        dist_x = radius * abs(ang_z)            # [m]
+        t = 5.0                                 # [s]
+        move_robot(pub_vel, dist_x, ang_z, t, time_start)
+        
         if rospy.Time.now() - time_start > rospy.Duration.from_sec(t):            
             # if the robot is to enter one of the neighbouring rows
             # it skips the state of moving a straight distance
             which_row = int(path_pattern[0])
+            time_start = rospy.Time.now()
             if which_row == 1:
-                time_start = rospy.Time.now()
                 return "state_turn_enter_row"
             else:
                 return "state_go_straight"
@@ -213,7 +209,82 @@ def state_turn_exit_row(pub_vel):
     else:
         return "state_done"
 
-def state_go_straight():
+def state_go_straight(pub_vel):
+    global path_pattern
+    global row_width
+    global time_start
+
+    # extract straight distance from path pattern
+    which_row = int(path_pattern[0])
+
+    ang_z = 0.0                         # [rad]
+    dist_x = (which_row-1)*row_width    # [m]
+    t = 5.0 * which_row              # [s]
+    move_robot(pub_vel, dist_x, ang_z, t, time_start)
+
+    if rospy.Time.now() - time_start > rospy.Duration.from_sec(t):                
+            return "state_crop_path_pattern"
+    else:
+        return "state_turn_enter_row"
+  
+
+def state_turn_enter_row(pub_vel):
+    global path_pattern
+    global row_width
+    global turn_l
+    global turn_r  
+    global time_start
+
+    if len(path_pattern) > 0:
+        # extract next turn from path pattern
+        # and check direction ('L' or 'R' ?)
+        which_turn = path_pattern[1]
+        if which_turn == 'L':
+            turn = turn_l
+        elif which_turn == 'R':
+            turn = turn_r
+        else:
+            rospy.logerr("Path pattern syntax error: undefined parameter '%s' for turn specification!", which_turn)
+            return "state_error"
+
+        ang_z = turn                    # [rad]
+        radius = row_width/2            # [m]
+        dist_x = radius * abs(ang_z)    # [m]
+        t = 5.0                         # [s]
+        move_robot(pub_vel, dist_x, ang_z, t, time_start)
+        
+        if rospy.Time.now() - time_start > rospy.Duration.from_sec(t):                
+                return "state_crop_path_pattern"
+        else:
+            return "state_turn_enter_row"
+    else:
+        return "state_done"
+
+def move_robot(pub, distance, angle, period, start_time):
+    """
+    Module that translates the robot according to a distance and rotates it
+    according to an angle in a given period of time.
+    param1 pub:         [publisher] ROS publisher on topic /cmd_vel
+    param2 distance:    [m] distance the robot is to move in x-direction
+    param3 angle:       [rad] yaw angle the robot is to turn around z-axis
+    param4 period:      [s] time period available for the movement
+    param5 start_time:  [time] ros.Time.now() of the beginning of the movement
+    return:             nothing
+    """
+    cmd_vel = Twist()
+    cmd_vel.linear.x = distance / period
+    cmd_vel.angular.z = angle / period
+    pub.publish(cmd_vel)
+    print("Progress movement [%]: ", (rospy.Time.now() - start_time) / rospy.Duration.from_sec(period) * 100)
+    return None
+
+def state_crop_path_pattern():
+    global path_pattern
+    # remove executed turn from path pattern
+    path_pattern = path_pattern[2::]
+    return "state_in_row"
+
+def state_go_straight_movebase():
     global path_pattern
     global row_width
     global time_start
@@ -234,46 +305,6 @@ def state_go_straight():
     else:
         rospy.logerr("Straight goal not reached!")
         return "state_error"
-
-def state_turn_enter_row(pub_vel):
-    global path_pattern
-    global row_width
-    global turn_l
-    global turn_r  
-    global time_start
-
-    if len(path_pattern) > 0:
-        # extract next turn from path pattern
-        # and check direction ('L' or 'R' ?)
-        which_turn = path_pattern[1]
-        if which_turn == 'L':
-            turn = turn_l
-        elif which_turn == 'R':
-            turn = turn_r
-        else:
-            rospy.logerr("Path pattern syntax error: undefined parameter '%s' for turn specification!", which_turn)
-            return "state_error"
-        
-        t = 5.0; # [s]
-        radius = row_width/2 # [m]
-        angle = turn # [rad]
-        cmd_vel = Twist()
-        cmd_vel.linear.x = radius * abs(angle) / t
-        cmd_vel.angular.z = angle / t
-        pub_vel.publish(cmd_vel)
-        print(np.degrees(angle), radius, rospy.Time.now() - time_start, rospy.Duration.from_sec(t), rospy.Time.now() - time_start > rospy.Duration.from_sec(t))
-        if rospy.Time.now() - time_start > rospy.Duration.from_sec(t):                
-                return "state_crop_path_pattern"
-        else:
-            return "state_turn_enter_row"
-    else:
-        return "state_done"
-
-def state_crop_path_pattern():
-    global path_pattern
-    # remove executed turn from path pattern
-    path_pattern = path_pattern[2::]
-    return "state_in_row"
 
 def tf_point_to_center_line(angle, offset, x, y, gamma):
     """
@@ -298,7 +329,7 @@ def tf_point_to_center_line(angle, offset, x, y, gamma):
     gamma_new = gamma - angle
     return (x_new, y_new, gamma_new)
 
-def state_turn_to_next_row():
+def state_turn_row_movebase():
     global path_pattern
     global row_width
     global angle_valid
@@ -449,11 +480,13 @@ if __name__ == '__main__':
         elif state == "state_turn_exit_row":
             state = state_turn_exit_row(pub_vel)
         elif state == "state_go_straight":
-            state = state_go_straight()
+            state = state_go_straight(pub_vel)
         elif state == "state_turn_enter_row":
             state = state_turn_enter_row(pub_vel)
-        elif state == "state_turn_to_next_row":
-            state = state_turn_to_next_row()
+        elif state == "state_go_straight_movebase":
+            state = state_go_straight_movebase()
+        elif state == "state_turn_row_movebase":
+            state = state_turn_row_movebase()
         elif state == "state_crop_path_pattern":
             state = state_crop_path_pattern()
         elif state == "state_idle":
