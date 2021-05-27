@@ -82,17 +82,42 @@ def laser_callback(scan):
         global offset_valid
         global row_width
         global end_of_row
-
-        angle_increment = scan.angle_increment
-        angle_outer_limit_curr = scan.angle_max
-        angle_outer_limit_targ = np.radians(130)
-        angle_inner_limit_targ = np.radians(20)
-        idx_ranges_outer = int(np.round((angle_outer_limit_curr - angle_outer_limit_targ) / angle_increment))
-        idx_ranges_inner = int(np.round((angle_outer_limit_curr - angle_inner_limit_targ) / angle_increment))
         
-        scan_cart = scan2cart(scan, max_range=row_width)
-        scan_left = scan_cart[:, -idx_ranges_inner:-idx_ranges_outer]
-        scan_right = scan_cart[:, idx_ranges_outer:idx_ranges_inner]
+        # transform laserscan from polar to cartesian coordinates
+        scan_cart = scan2cart(scan, max_range=5.0)
+
+        # rotate scan around z by angle_new
+        c, s = np.cos(-angle_valid), np.sin(-angle_valid)
+        rot_z = np.array(((c, -s), (s, c)))
+        scan_cart_rot = np.matmul(scan_cart, rot_z)
+
+        # identify all scan dots belonging to left and right row
+        mask_scan_left = scan_cart_rot[:, 1] > 0 and scan_cart_rot[:, 1] < 1.5*row_width
+        mask_scan_right = scan_cart_rot[:, 1] < 0 and scan_cart_rot[:, 1] > 1.5*row_width
+        scan_left = scan_cart_rot[mask_scan_left,:]
+        scan_right = scan_cart_rot[mask_scan_right,:]
+        scan_left_centered = scan_left
+        scan_right_centered = scan_right
+        
+        # bring scan dots of left and right row to the center
+        scan_left_centered[:, 1] = scan_left_centered[:, 1] - row_width
+        scan_right_centered[:, 1] = scan_right_centered[:, 1] + row_width
+
+        # merge all scan dots again into one array
+        scan_centered = np.vstack((scan_left_centered, scan_right_centered))
+
+        # determine indices to split and crop laser scan into left and right side
+        angle_increment = scan.angle_increment
+        angle_outer_limit_scan = scan.angle_max
+        angle_outer_limit_targ = np.radians(135)
+        if angle_outer_limit_targ > angle_outer_limit_scan:
+            angle_outer_limit_targ = angle_outer_limit_scan
+        angle_inner_limit_targ = np.radians(20)
+        idx_ranges_outer = int(np.round((angle_outer_limit_scan - angle_outer_limit_targ) / angle_increment))
+        idx_ranges_inner = int(np.round((angle_outer_limit_scan - angle_inner_limit_targ) / angle_increment))
+
+        scan_left = scan_cart_rot[:, -idx_ranges_inner:-idx_ranges_outer]
+        scan_right = scan_cart_rot[:, idx_ranges_outer:idx_ranges_inner]
 
         mean_left = np.nanmean(scan_left[1, :])
         mean_right = np.nanmean(scan_right[1, :])
