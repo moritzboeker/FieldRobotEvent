@@ -50,8 +50,8 @@ def check_end_of_row(scan, angle_min, angle_max, range_max, ctr_max):
     if scan.angle_max < angle_max:
         angle_max = scan.angle_max
     num_ranges = len(scan.ranges)
-    idx_lower = num_ranges/2 + int(np.round(angle_min / scan.angle_increment))
-    idx_upper = num_ranges/2 + int(np.round(angle_max / scan.angle_increment))
+    idx_lower = int(num_ranges/2 + np.round(angle_min / scan.angle_increment))
+    idx_upper = int(num_ranges/2 + np.round(angle_max / scan.angle_increment))
     scan_cropped = np.array(scan.ranges[idx_lower:idx_upper])
     # filter ranges above range_max
     allow_ranges = scan_cropped <= range_max
@@ -123,16 +123,21 @@ def clip(val, max_val, min_val):
         return val
 
 def laser_callback(scan):
-    global theta
-    global ydist
-    global theta_valid
-    global ydist_valid
+    global angle
+    global offset
+    global angle_valid
+    global offset_valid
     global row_width
     global end_of_row
-    global xy_coords
+    global xy_coords1
+    global xy_coords2
+
     if state == "state_in_row":
-        # convert scan from polar into cartesian coordinates
-        scan_cart = scan2cart(scan, max_range=30.0)
+        # convert scan from polar into cartesian coordinates,
+        # reduce laser range so that the robot does not see
+        # the ground when it is driving over uneven ground
+        scan_cart = scan2cart(scan, max_range=3.0)
+        xy_coords1 = scan_cart
         # determine euclidean distance between each subsequent scan point
         x_dist_scan = np.diff(scan_cart[:, 0])
         y_dist_scan = np.diff(scan_cart[:, 1])
@@ -140,7 +145,7 @@ def laser_callback(scan):
         eucl_dist = np.insert(eucl_dist, 0, 0, axis=0)
 
         # determine which scan points belong to one and the same plant and split scan accordingly
-        idx_next_plant = np.where(eucl_dist > 0.05)
+        idx_next_plant = np.where(eucl_dist > 0.1)
         split_plants = np.vsplit(scan_cart, idx_next_plant[0])
 
         # determine mean position of all plants having at least n_points of scan points
@@ -151,135 +156,135 @@ def laser_callback(scan):
                 mean_position = np.nanmean(plant, axis=0)
                 plants_all.append(mean_position)
         plants_all = np.array(plants_all)
+        xy_coords2 = plants_all
 
         # calculate line angles from one plant to another
         x_dist_plant = np.diff(plants_all[:, 0])
         y_dist_plant = np.diff(plants_all[:, 1])
-        thetas = np.arctan2(y_dist_plant, x_dist_plant)
+        angles = np.arctan2(y_dist_plant, x_dist_plant)
         # change perspective plants to robot --> robot to plants
-        thetas = -thetas
+        angles = -angles
         # Modify angles so that 
         # e.g. [   9  125   17   -2   75 -176 -175   57 -164] --> [   9  125   17   -2   75    4    5   57 -164]
-        thetas = np.where(thetas < np.radians(-170), thetas + np.pi, thetas)
-        thetas = np.where(thetas > np.radians(170), thetas - np.pi, thetas)
+        angles = np.where(angles < np.radians(-170), angles + np.pi, angles)
+        angles = np.where(angles > np.radians(170), angles - np.pi, angles)
 
         # apply a histogram to line angles
-        range_min_theta = -np.pi
-        range_max_theta = np.pi
+        range_min_angle = -np.pi
+        range_max_angle = np.pi
         bin_res = np.radians(5) # [radians/bin] resolution of histogram
-        n_bins_theta = int(np.round((range_max_theta - range_min_theta) / bin_res))
-        bin_counts, bin_edges = np.histogram(thetas, bins=n_bins_theta, range=(range_min_theta, range_max_theta))
+        n_bins_angle = int(np.round((range_max_angle - range_min_angle) / bin_res))
+        bin_counts, bin_edges = np.histogram(angles, bins=n_bins_angle, range=(range_min_angle, range_max_angle))
         # # PLOT HISTOGRAM
         # # of line angles
         # fig, axs = plt.subplots()
-        # axs.hist(np.degrees(thetas), bins=n_bins_theta, range=(np.degrees(range_min_theta), np.degrees(range_max_theta)))
+        # axs.hist(np.degrees(angles), bins=n_bins_angle, range=(np.degrees(range_min_angle), np.degrees(range_max_angle)))
         # plt.show(block=True)
 
         # evaluate histogram around previous angle of robot to the center line of corn row
-        if not np.isnan(theta):
-            # theta will only be updated if the previous theta has been a valid angle
-            # at the end of the row, 'nan' may be assigned to theta
-            # in such a case the previous theta will not be updated
-            theta_valid = theta
+        if not np.isnan(angle):
+            # angle will only be updated if the previous angle has been a valid angle
+            # at the end of the row, 'nan' may be assigned to angle
+            # in such a case the previous angle will not be updated
+            angle_valid = angle
         # else:
-        #     theta_valid = 0.0
-        tol_degrees = 10 # [degrees] when determining theta, we will look for angles +- this angle around theta_old
+        #     angle_valid = 0.0
+        tol_degrees = 10 # [degrees] when determining angle, we will look for angles +- this angle around angle_old
         tol_degrees_bins = np.round(np.radians(tol_degrees) / bin_res)
-        theta_hist_idx = np.round((theta_valid + np.pi) / bin_res)
-        indices_peak_theta = indices_peak(theta_hist_idx, tol_degrees_bins, n_bins_theta)
+        angle_hist_idx = np.round((angle_valid + np.pi) / bin_res)
+        indices_peak_angle = indices_peak(angle_hist_idx, tol_degrees_bins, n_bins_angle)
         # determine current angle of robot to the center line of corn row
-        theta = mean_peak(indices_peak_theta, bin_counts, bin_edges, bin_res)
+        angle = mean_peak(indices_peak_angle, bin_counts, bin_edges, bin_res)
 
-        # rotate scan around z by theta_new
-        c, s = np.cos(-theta), np.sin(-theta)
+        # rotate scan around z by angle_new
+        c, s = np.cos(-angle), np.sin(-angle)
         rot_z = np.array(((c, -s), (s, c)))
         scan_cart_rot = np.matmul(scan_cart, rot_z)
-        xy_coords = scan_cart_rot
 
         # apply a histogram to y-distances of rotated scan
-        range_min_ydist = -row_width # [m]
-        range_max_ydist = row_width # [m]
+        range_min_offset = -row_width # [m]
+        range_max_offset = row_width # [m]
         bin_res = 0.01 # [m]
-        n_bins_ydist = int(np.round((range_max_ydist - range_min_ydist) / bin_res)) # number of bins for y dist histogram
+        n_bins_offset = int(np.round((range_max_offset - range_min_offset) / bin_res)) # number of bins for y dist histogram
         y_dists = scan_cart_rot[:, 1]
-        bin_counts, bin_edges = np.histogram(y_dists, bins=n_bins_ydist, range=(range_min_ydist, range_max_ydist))
+        bin_counts, bin_edges = np.histogram(y_dists, bins=n_bins_offset, range=(range_min_offset, range_max_offset))
         # # PLOT HISTOGRAM
         # # of y distances from robot to plants
         # fig, axs = plt.subplots()
-        # axs.hist(y_dists, bins=n_bins_ydist, range=(range_min_ydist, range_max_ydist))
+        # axs.hist(y_dists, bins=n_bins_offset, range=(range_min_offset, range_max_offset))
         # plt.show(block=True)  
 
         # evaluate histogram around y-distance of robot to the center line of corn row
-        if not np.isnan(ydist):
-            # ydist will only be updated if the previous ydist has been a valid angle
-            # at the end of the row, 'nan' may be assigned to ydist
-            # in such a case the previous ydist will not be updated
-            ydist_valid = ydist
+        if not np.isnan(offset):
+            # offset will only be updated if the previous offset has been a valid angle
+            # at the end of the row, 'nan' may be assigned to offset
+            # in such a case the previous offset will not be updated
+            offset_valid = offset
         # else:
-        #     ydist_valid = 0.0
-        tol_ydist = 0.03 # [m]
-        tol_ydist_bins = np.round(tol_ydist / bin_res) # [bins]
-        ydist_max_idx = np.argmax(bin_counts)
-        indices_peak_ydist = indices_peak(ydist_max_idx, tol_ydist_bins, n_bins_ydist)
+        #     offset_valid = 0.0
+        tol_offset = 0.03 # [m]
+        tol_offset_bins = np.round(tol_offset / bin_res) # [bins]
+        offset_max_idx = np.argmax(bin_counts)
+        indices_peak_offset = indices_peak(offset_max_idx, tol_offset_bins, n_bins_offset)
         # determine current y-distance of robot to the center line of corn row
-        ydist = mean_peak(indices_peak_ydist, bin_counts, bin_edges, bin_res)
-        if ydist < 0:
-            ydist += row_width/2
+        offset = mean_peak(indices_peak_offset, bin_counts, bin_edges, bin_res)
+        if offset < 0:
+            offset += row_width/2
         else:
-            ydist -= row_width/2
+            offset -= row_width/2
         end_of_row = check_end_of_row(scan, -np.pi/2, np.pi/2, 3.0, 20)      
     else:
         pass
     
 def state_in_row(pub_vel):
     global row_width
-    global p_gain_theta_factor
-    global p_gain_ydist_factor
-    global ctrl_by_theta
-    global ctrl_by_ydist
+    global p_gain_angle_factor
+    global p_gain_offset_factor
+    global ctrl_by_angle
+    global ctrl_by_offset
     global max_lin_vel
     global end_of_row
     global time_start
 
-    setpoint_theta = 0;                         # [rad]
-    setpoint_ydist = 0;                         # [m]
-    error_theta = setpoint_theta - theta_valid
-    error_ydist = setpoint_ydist - ydist_valid
+    setpoint_angle = 0;                         # [rad]
+    setpoint_offset = 0;                         # [m]
+    error_angle = setpoint_angle - angle_valid
+    error_offset = setpoint_offset - offset_valid
 
     max_angular_z = np.pi/2;                    # [rad/s]
-    max_theta = np.pi/4;                        # [rad]
-    max_ydist = row_width/2;                    # [m]
-    p_gain_theta = max_angular_z/max_theta*p_gain_theta_factor;     # = 2.0
-    p_gain_ydist = max_angular_z/max_ydist*p_gain_ydist_factor;     # = 4.19
+    max_angle = np.pi/4;                        # [rad]
+    max_offset = row_width/2;                    # [m]
+    p_gain_angle = max_angular_z/max_angle*p_gain_angle_factor;     # = 2.0
+    p_gain_offset = max_angular_z/max_offset*p_gain_offset_factor;     # = 4.19
 
-    act_theta = p_gain_theta*error_theta
-    act_ydist = -p_gain_ydist*error_ydist
+    act_angle = p_gain_angle*error_angle
+    act_offset = -p_gain_offset*error_offset
     
-    # normed_theta_abs = np.abs(theta_valid / max_theta)
-    # normed_ydist_abs = np.abs(ydist_valid / max_ydist)
-    # normed_theta_abs = clip(normed_theta_abs, 1.0, 0.0)
-    # normed_ydist_abs = clip(normed_ydist_abs, 1.0, 0.0)
-    # normed_deviation = (normed_theta_abs + normed_ydist_abs) / 2
+    # normed_angle_abs = np.abs(angle_valid / max_angle)
+    # normed_offset_abs = np.abs(offset_valid / max_offset)
+    # normed_angle_abs = clip(normed_angle_abs, 1.0, 0.0)
+    # normed_offset_abs = clip(normed_offset_abs, 1.0, 0.0)
+    # normed_deviation = (normed_angle_abs + normed_offset_abs) / 2
     cmd_vel = Twist()
     # cmd_vel.linear.x = max_lin_vel * (normed_deviation - 1)**2
     cmd_vel.linear.x = 0.3
     # np.set_printoptions(precision=1)
-    # print('{:6.2f}, {:6.2f}, {:6.2f}, {:6.2f}'.format(normed_theta_abs, normed_ydist_abs, normed_deviation, max_lin_vel * (1 - normed_deviation)))
-    if ctrl_by_theta and not ctrl_by_ydist:
-        cmd_vel.angular.z = act_theta
-    elif ctrl_by_ydist and not ctrl_by_theta:
-        cmd_vel.angular.z = act_ydist
+    # print('{:6.2f}, {:6.2f}, {:6.2f}, {:6.2f}'.format(normed_angle_abs, normed_offset_abs, normed_deviation, max_lin_vel * (1 - normed_deviation)))
+    if ctrl_by_angle and not ctrl_by_offset:
+        cmd_vel.angular.z = act_angle
+    elif ctrl_by_offset and not ctrl_by_angle:
+        cmd_vel.angular.z = act_offset
     else:
-        cmd_vel.angular.z = act_theta/2 + act_ydist/2
+        cmd_vel.angular.z = act_angle/2 + act_offset/2
 
     pub_vel.publish(cmd_vel)        
-    # print(ydist_valid, act_ydist)
-    # print(theta_valid, act_theta)
+    # print(offset_valid, act_offset)
+    # print(angle_valid, act_angle)
     if end_of_row:
         time_start = rospy.Time.now()
-        print("theta_valid", np.degrees(theta_valid), "ydist_valid", ydist_valid)
-        # return "state_turn_exit_row"
-        return "state_turn_to_next_row"
+        print("angle_valid", np.degrees(angle_valid), "offset_valid", offset_valid)
+        return "state_turn_exit_row"
+        # return "state_turn_to_next_row"
     else:
         return "state_in_row"
 
@@ -289,8 +294,8 @@ def state_turn_exit_row(pub_vel):
     global turn_l
     global turn_r  
     global time_start
-    global theta_valid
-    global ydist_valid
+    global angle_valid
+    global offset_valid
 
     if len(path_pattern) > 0:
         # extract next turn from path pattern
@@ -304,20 +309,18 @@ def state_turn_exit_row(pub_vel):
             rospy.logerr("Path pattern syntax error: undefined parameter '%s' for turn specification!", which_turn)
             return "state_error"
         
-        t = 3.0; # [s]
-        radius = (row_width - ydist_valid) / 2 # [m]
-        angle = turn - theta_valid # [rad]
-        cmd_vel = Twist()
-        cmd_vel.linear.x = radius * abs(angle) / t
-        cmd_vel.angular.z = angle / t
-        pub_vel.publish(cmd_vel)
-        print(np.degrees(angle), radius, rospy.Time.now() - time_start, rospy.Duration.from_sec(t), rospy.Time.now() - time_start > rospy.Duration.from_sec(t))
+        ang_z = turn - angle_valid              # [rad]
+        radius = (row_width - offset_valid) / 2 # [m]
+        dist_x = radius * abs(ang_z)            # [m]
+        t = 5.0                                 # [s]
+        move_robot(pub_vel, dist_x, ang_z, t, time_start)
+        
         if rospy.Time.now() - time_start > rospy.Duration.from_sec(t):            
             # if the robot is to enter one of the neighbouring rows
             # it skips the state of moving a straight distance
             which_row = int(path_pattern[0])
+            time_start = rospy.Time.now()
             if which_row == 1:
-                time_start = rospy.Time.now()
                 return "state_turn_enter_row"
             else:
                 return "state_go_straight"
@@ -326,27 +329,24 @@ def state_turn_exit_row(pub_vel):
     else:
         return "state_done"
 
-def state_go_straight():
+def state_go_straight(pub_vel):
     global path_pattern
     global row_width
     global time_start
 
     # extract straight distance from path pattern
     which_row = int(path_pattern[0])
-    distance_x = (which_row-1)*row_width
-    distance_y = 0.0
-    angle = 0.0
-    
-    # but if the robot is to enter another row,
-    # it firstly needs to drive to that row before turning into it
-    result_straight = movebase_client(distance_x, distance_y, angle)
-    if result_straight:
-        rospy.logwarn("Straight goal execution done!")
-        time_start = rospy.Time.now()
-        return "state_turn_enter_row"
+
+    ang_z = 0.0                         # [rad]
+    dist_x = (which_row-1)*row_width    # [m]
+    t = 5.0 * which_row              # [s]
+    move_robot(pub_vel, dist_x, ang_z, t, time_start)
+
+    if rospy.Time.now() - time_start > rospy.Duration.from_sec(t):                
+            return "state_crop_path_pattern"
     else:
-        rospy.logerr("Straight goal not reached!")
-        return "state_error"
+        return "state_turn_enter_row"
+  
 
 def state_turn_enter_row(pub_vel):
     global path_pattern
@@ -366,16 +366,13 @@ def state_turn_enter_row(pub_vel):
         else:
             rospy.logerr("Path pattern syntax error: undefined parameter '%s' for turn specification!", which_turn)
             return "state_error"
+
+        ang_z = turn                    # [rad]
+        radius = row_width/2            # [m]
+        dist_x = radius * abs(ang_z)    # [m]
+        t = 5.0                         # [s]
+        move_robot(pub_vel, dist_x, ang_z, t, time_start)
         
-        t = 3.0; # [s]
-        radius = row_width/2 # [m]
-        angle = turn # [rad]
-        cmd_vel = Twist()
-        cmd_vel.linear.x = radius * abs(angle) / t
-        cmd_vel.angular.z = angle / t
-        pub_vel.publish(cmd_vel)
-        print(radius * abs(angle) / t, np.degrees(angle / t))
-        # print(np.degrees(angle), radius, rospy.Time.now() - time_start, rospy.Duration.from_sec(t), rospy.Time.now() - time_start > rospy.Duration.from_sec(t))
         if rospy.Time.now() - time_start > rospy.Duration.from_sec(t):                
                 return "state_crop_path_pattern"
         else:
@@ -383,22 +380,62 @@ def state_turn_enter_row(pub_vel):
     else:
         return "state_done"
 
+def move_robot(pub, distance, angle, period, start_time):
+    """
+    Module that translates the robot according to a distance and rotates it
+    according to an angle in a given period of time.
+    param1 pub:         [publisher] ROS publisher on topic /cmd_vel
+    param2 distance:    [m] distance the robot is to move in x-direction
+    param3 angle:       [rad] yaw angle the robot is to turn around z-axis
+    param4 period:      [s] time period available for the movement
+    param5 start_time:  [time] ros.Time.now() of the beginning of the movement
+    return:             nothing
+    """
+    cmd_vel = Twist()
+    cmd_vel.linear.x = distance / period
+    cmd_vel.angular.z = angle / period
+    pub.publish(cmd_vel)
+    print("Progress movement [%]: ", (rospy.Time.now() - start_time) / rospy.Duration.from_sec(period) * 100)
+    return None
+
 def state_crop_path_pattern():
     global path_pattern
     # remove executed turn from path pattern
     path_pattern = path_pattern[2::]
     return "state_in_row"
 
-def tf_point_to_center_line(theta, ydist, x, y, gamma):
+def state_go_straight_movebase():
+    global path_pattern
+    global row_width
+    global time_start
+
+    # extract straight distance from path pattern
+    which_row = int(path_pattern[0])
+    dist_x = (which_row-1)*row_width
+    dist_y = 0.0
+    ang_z = 0.0
+    
+    # but if the robot is to enter another row,
+    # it firstly needs to drive to that row before turning into it
+    result_straight = movebase_client(dist_x, dist_y, ang_z)
+    if result_straight:
+        rospy.logwarn("Straight goal execution done!")
+        time_start = rospy.Time.now()
+        return "state_turn_enter_row"
+    else:
+        rospy.logerr("Straight goal not reached!")
+        return "state_error"
+
+def tf_point_to_center_line(angle, offset, x, y, gamma):
     """
     The Robot has finished a row and the last angle and distance
-    to the center line has been theta and ydist respectively.
+    to the center line has been angle and offset respectively.
     This function transforms the position of a point lying in 
     a frame with its x-axis at the center line to the robot
     base_link frame.
     inputs:
-    param1 theta:   the angle of center line to robot frame x-axis
-    param2 ydist:   the perpendicular distance between center line and robot frame origin
+    param1 angle:   the angle of center line to robot frame x-axis
+    param2 offset:   the perpendicular distance between center line and robot frame origin
     param3 x:       the desired distance in x-direction (on center line)
     param4 y:       the desired distance in y-direction (perpedicular to center line)
     param5 gamma:   the desired orientation counter clockwise (from center line)
@@ -407,16 +444,16 @@ def tf_point_to_center_line(theta, ydist, x, y, gamma):
     y_new:          the y-coordinate in robot frame
     gamma_new:      the orientation in robot frame
     """
-    x_new = x*np.cos(theta) + y*np.sin(theta) - ydist*np.sin(theta)
-    y_new = -x*np.sin(theta) + y*np.cos(theta) - ydist*np.cos(theta)
-    gamma_new = gamma - theta
+    x_new = x*np.cos(angle) + y*np.sin(angle) - offset*np.sin(angle)
+    y_new = -x*np.sin(angle) + y*np.cos(angle) - offset*np.cos(angle)
+    gamma_new = gamma - angle
     return (x_new, y_new, gamma_new)
 
-def state_turn_to_next_row():
+def state_turn_row_movebase():
     global path_pattern
     global row_width
-    global theta_valid
-    global ydist_valid
+    global angle_valid
+    global offset_valid
     lin_row_enter = 1.0     # [m]
     lin_row_exit = 1.0      # [m]
     turn_l = np.pi/2        # [rad]
@@ -440,7 +477,7 @@ def state_turn_to_next_row():
             rospy.logerr("Path pattern syntax error: non-integer value for row specification!")
             return "state_error"
 
-        point = tf_point_to_center_line(theta_valid, ydist_valid, lin_row_exit, 0.0, 0.0)
+        point = tf_point_to_center_line(angle_valid, offset_valid, lin_row_exit, 0.0, 0.0)
         result_straight = movebase_client(point[0], point[1], point[2])
         if result_straight:
             rospy.logwarn("1. Straight goal execution done!")
@@ -512,24 +549,34 @@ def state_error():
     pass
     return "state_done"
 
+            
+angle = 0.0
+row_width = 0.75
+turn_l = np.pi/2
+turn_r = -np.pi/2
+lin_row_exit = 1.0
+lin_row_enter = lin_row_exit
+state = "state_in_row" 
+
 row_width = 0.75
 turn_l = np.pi/2
 turn_r = -np.pi/2
 state = "state_in_row"
-theta = 0.0
-ydist = 0.0
-theta_valid = 0.0
-ydist_valid = 0.0
-p_gain_theta_factor = 0.0
-p_gain_ydist_factor = 0.0
-ctrl_by_theta = True
-ctrl_by_ydist = True
+angle = 0.0
+offset = 0.0
+angle_valid = 0.0
+offset_valid = 0.0
+p_gain_angle_factor = 0.0
+p_gain_offset_factor = 0.0
+ctrl_by_angle = True
+ctrl_by_offset = True
 max_lin_vel = 0.0
 end_of_row = False
 end_row_ctr = 0
 path_pattern = ""
 time_start = 0.0
-xy_coords = np.zeros((10,2))
+xy_coords1 = np.zeros((10,2))
+xy_coords2 = np.zeros((10,2))
 
 if __name__ == '__main__':
     rospy.init_node('path_planning', anonymous=True)
@@ -541,10 +588,10 @@ if __name__ == '__main__':
     path_pattern = path_pattern.replace("-", "")    # remove hyphens: S-1L-2L-1L-1R-F --> S1L2L1L1RF
     path_pattern = path_pattern[1:-1]               # remove S (Start) and F (Finish): S1L2L1L1RF --> 1L2L1L1R
     # TODO: Check row pattern if correct
-    p_gain_theta_factor = rospy.get_param('~p_gain_theta_factor')
-    p_gain_ydist_factor = rospy.get_param('~p_gain_ydist_factor')
-    ctrl_by_theta = rospy.get_param('~ctrl_by_theta')
-    ctrl_by_ydist = rospy.get_param('~ctrl_by_ydist')
+    p_gain_angle_factor = rospy.get_param('~p_gain_angle_factor')
+    p_gain_offset_factor = rospy.get_param('~p_gain_offset_factor')
+    ctrl_by_angle = rospy.get_param('~ctrl_by_angle')
+    ctrl_by_offset = rospy.get_param('~ctrl_by_offset')
     max_lin_vel = rospy.get_param('~max_lin_vel')
 
     fig = plt.figure()
@@ -554,11 +601,13 @@ if __name__ == '__main__':
         elif state == "state_turn_exit_row":
             state = state_turn_exit_row(pub_vel)
         elif state == "state_go_straight":
-            state = state_go_straight()
+            state = state_go_straight(pub_vel)
         elif state == "state_turn_enter_row":
             state = state_turn_enter_row(pub_vel)
-        elif state == "state_turn_to_next_row":
-            state = state_turn_to_next_row()
+        elif state == "state_go_straight_movebase":
+            state = state_go_straight_movebase()
+        elif state == "state_turn_row_movebase":
+            state = state_turn_row_movebase()
         elif state == "state_crop_path_pattern":
             state = state_crop_path_pattern()
         elif state == "state_idle":
@@ -569,7 +618,8 @@ if __name__ == '__main__':
             state = "state_done"
         print(state)
 
-        plt.plot(xy_coords[:,0], xy_coords[:,1], "ob", label="scatter")
+        plt.plot(xy_coords1[:,0], xy_coords1[:,1], "ob", label="xy_coords1")
+        plt.plot(xy_coords2[:,0], xy_coords2[:,1], "xr", label="xy_coords2")
         plt.draw()
         plt.pause(0.05)
         fig.clear()        
