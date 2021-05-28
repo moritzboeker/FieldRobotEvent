@@ -8,6 +8,7 @@ from tf.transformations import quaternion_from_euler
 
 
 import numpy as np
+import scipy as sp
 import matplotlib.pyplot as plt
 
 def scan2cart(scan, max_range=30.0):
@@ -18,11 +19,14 @@ def scan2cart(scan, max_range=30.0):
     return:             x- and y-coordinates of laser scan
     """
     angles = np.linspace(scan.angle_min, scan.angle_max, len(scan.ranges))
-    ignore_ranges = np.array(scan.ranges) > max_range
     x = scan.ranges*np.cos(angles)
     y = scan.ranges*np.sin(angles)
     scan_cart = np.array([x, y])
-    scan_cart[:, ignore_ranges] = None
+    scan_cart = np.transpose(scan_cart)
+    # ignore_ranges = np.array(scan.ranges) > max_range
+    # scan_cart[ignore_ranges, :] = None
+    allow_ranges = np.array(scan.ranges) <= max_range
+    scan_cart = scan_cart[allow_ranges, :]
     return scan_cart
 
 def check_end_of_row(scan, angle_min, angle_max, range_max, ctr_max):
@@ -80,56 +84,71 @@ def laser_callback(scan):
     if state == "state_in_row":
         global angle_valid
         global offset_valid
+        global angle_buffer
+        global offset_buffer
+        global offset_buffer_median
+        global angle_buffer_median
         global row_width
         global end_of_row
+        global xy_coords1
+        global xy_coords2
+        global xy_coords3
         
         # transform laserscan from polar to cartesian coordinates
-        scan_cart = scan2cart(scan, max_range=5.0)
+        scan_cart = scan2cart(scan, max_range=3*row_width)
+        xy_coords1 = scan_cart
 
-        # rotate scan around z by angle_new
+        # rotate scan counterclockwise around z-axis by angle_valid
         c, s = np.cos(-angle_valid), np.sin(-angle_valid)
-        rot_z = np.array(((c, -s), (s, c)))
-        scan_cart_rot = np.matmul(scan_cart, rot_z)
+        rot_z_cw = np.array(((c, -s), (s, c)))
+        scan_cart_rot = np.matmul(scan_cart, rot_z_cw)
+        # xy_coords1 = scan_cart_rot
 
         # identify all scan dots belonging to left and right row
-        mask_scan_left = scan_cart_rot[:, 1] > 0 and scan_cart_rot[:, 1] < 1.5*row_width
-        mask_scan_right = scan_cart_rot[:, 1] < 0 and scan_cart_rot[:, 1] > 1.5*row_width
+        mask_scan_left = np.logical_and(scan_cart_rot[:, 1] > 0, scan_cart_rot[:, 1] < row_width)
+        mask_scan_right = np.logical_and(scan_cart_rot[:, 1] < 0, scan_cart_rot[:, 1] > -row_width)
         scan_left = scan_cart_rot[mask_scan_left,:]
         scan_right = scan_cart_rot[mask_scan_right,:]
-        scan_left_centered = scan_left
-        scan_right_centered = scan_right
+        # xy_coords2 = np.vstack((scan_left, scan_right))
         
         # bring scan dots of left and right row to the center
-        scan_left_centered[:, 1] = scan_left_centered[:, 1] - row_width
-        scan_right_centered[:, 1] = scan_right_centered[:, 1] + row_width
-
-        # merge all scan dots again into one array
+        scan_left_centered = scan_left
+        scan_right_centered = scan_right
+        scan_left_centered[:, 1] = scan_left_centered[:, 1] - row_width/2
+        scan_right_centered[:, 1] = scan_right_centered[:, 1] + row_width/2
         scan_centered = np.vstack((scan_left_centered, scan_right_centered))
+        # xy_coords2 = scan_centered
 
-        # determine indices to split and crop laser scan into left and right side
-        angle_increment = scan.angle_increment
-        angle_outer_limit_scan = scan.angle_max
-        angle_outer_limit_targ = np.radians(135)
-        if angle_outer_limit_targ > angle_outer_limit_scan:
-            angle_outer_limit_targ = angle_outer_limit_scan
-        angle_inner_limit_targ = np.radians(20)
-        idx_ranges_outer = int(np.round((angle_outer_limit_scan - angle_outer_limit_targ) / angle_increment))
-        idx_ranges_inner = int(np.round((angle_outer_limit_scan - angle_inner_limit_targ) / angle_increment))
+        # rotate centered scan clockwise around z-axis by angle_valid
+        c, s = np.cos(angle_valid), np.sin(angle_valid)
+        rot_z_ccw = np.array(((c, -s), (s, c)))
+        scan_centered_rot = np.matmul(scan_centered, rot_z_ccw)
+        xy_coords2 = scan_centered_rot
 
-        scan_left = scan_cart_rot[:, -idx_ranges_inner:-idx_ranges_outer]
-        scan_right = scan_cart_rot[:, idx_ranges_outer:idx_ranges_inner]
+        poly_coeffs = np.polyfit(scan_centered_rot[:, 0], scan_centered_rot[:, 1], 1)
+        poly_func = np.poly1d(poly_coeffs)
+        poly_deriv = poly_func.deriv(1)
+        x = np.linspace(np.min(scan_centered_rot[:, 0]), np.max(scan_centered_rot[:, 0]), 100)
+        y = poly_func(x)
+        xy_coords3 = np.vstack((x,y)).transpose()
+        offset = poly_func(0)
+        angle = poly_deriv(0)
 
-        mean_left = np.nanmean(scan_left[1, :])
-        mean_right = np.nanmean(scan_right[1, :])
+        # Fill first buffer
+        angle_buffer.append(angle)
+        offset_buffer.append(offset)
 
-        offset = mean_right + mean_left
-        if not np.isnan(offset):
-            offset_valid = offset
-        else:
-            offset = offset_valid
-        angle = - offset / (mean_left - mean_right)
-        if not np.isnan(angle):
-            angle_valid = angle
+        # # Determine median of first buffer content and fill second buffer
+        # angle_buffer_median.append(np.median(angle_buffer))
+        # offset_buffer_median.append(np.median(offset_buffer))
+
+        # Determine mean of second buffer
+        angle_valid = np.mean(angle_buffer)
+        offset_valid = np.mean(offset_buffer)
+        
+        print("offset", offset_valid, "angle", np.degrees(angle_valid))
+        # if not np.isnan(angle):
+        #     angle_valid = angle   
 
         end_of_row = check_end_of_row(scan, -np.pi/2, np.pi/2, 3.0, 20)     
     else:
@@ -137,6 +156,7 @@ def laser_callback(scan):
 
 def state_in_row(pub_vel):
     global time_start
+    global row_width
     global end_of_row
     global angle_valid
     global offset_valid
@@ -153,7 +173,7 @@ def state_in_row(pub_vel):
 
     max_angular_z = np.pi/2;                    # [rad/s]
     max_angle = np.pi/4;                        # [rad]
-    max_offset = 0.75/2;                         # [m]
+    max_offset = row_width/2;                         # [m]
     p_gain_angle = max_angular_z/max_angle * p_gain_angle_factor;     # = 2.0
     p_gain_offset = max_angular_z/max_offset * p_gain_offset_factor;   # = 4.19
 
@@ -447,7 +467,6 @@ def movebase_client(lin_x, lin_y, ang_z):
         
 
 def state_idle():
-    pass
     return "state_idle"
 
 def state_error():
@@ -457,19 +476,19 @@ def state_error():
             
 angle = 0.0
 row_width = 0.75
-turn_l = np.pi/2
-turn_r = -np.pi/2
-lin_row_exit = 1.0
-lin_row_enter = lin_row_exit
 state = "state_in_row" 
 
 row_width = 0.75
 turn_l = np.pi/2
 turn_r = -np.pi/2
-state = "state_in_row"
-# angle = 0.0
-# offset = 0.0
-angle_valid = 0.0
+angle = 0.0
+offset = 0.0
+import collections
+angle_buffer = collections.deque(maxlen=10)
+offset_buffer = collections.deque(maxlen=10)
+angle_buffer_median = collections.deque(maxlen=10)
+offset_buffer_median = collections.deque(maxlen=10)
+angle_valid = np.radians(0.0)
 offset_valid = 0.0
 p_gain_angle_factor = 0.0
 p_gain_offset_factor = 0.0
@@ -480,7 +499,9 @@ end_of_row = False
 end_row_ctr = 0
 path_pattern = ""
 time_start = 0.0
-xy_coords = np.zeros((10,2))
+xy_coords1 = np.zeros((10,2))
+xy_coords2 = np.zeros((10,2))
+xy_coords3 = np.zeros((10,2))
 
 if __name__ == '__main__':
     rospy.init_node('path_planning', anonymous=True)
@@ -498,7 +519,7 @@ if __name__ == '__main__':
     ctrl_by_offset = rospy.get_param('~ctrl_by_offset')
     max_lin_vel = rospy.get_param('~max_lin_vel')
 
-    # fig = plt.figure()
+    fig = plt.figure()
     while not rospy.is_shutdown() and state != "state_done":
         if state == "state_in_row":
             state = state_in_row(pub_vel)
@@ -520,11 +541,13 @@ if __name__ == '__main__':
             state = state_error()
         else:
             state = "state_done"
-        print(state)
+        # print(state)
 
-        # plt.plot(xy_coords[:,0], xy_coords[:,1], "ob", label="scatter")
-        # plt.draw()
-        # plt.pause(0.05)
-        # fig.clear()        
+        plt.plot(xy_coords1[:,0], xy_coords1[:,1], "ob", label="xy_coords1")
+        plt.plot(xy_coords2[:,0], xy_coords2[:,1], "xr", label="xy_coords2")
+        plt.plot(xy_coords3[:,0], xy_coords3[:,1], "-g", label="xy_coords3")
+        plt.draw()
+        plt.pause(0.05)
+        fig.clear()        
         
         rate.sleep()
