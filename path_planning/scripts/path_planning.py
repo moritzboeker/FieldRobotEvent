@@ -125,14 +125,12 @@ def laser_callback(scan):
         scan_centered_rot = np.matmul(scan_centered, rot_z_ccw)
         xy_coords2 = scan_centered_rot
 
+        # determine a polynomial function that approximates the scan dots best
         poly_coeffs = np.polyfit(scan_centered_rot[:, 0], scan_centered_rot[:, 1], 1)
         poly_func = np.poly1d(poly_coeffs)
         poly_deriv = poly_func.deriv(1)
-        x = np.linspace(np.min(scan_centered_rot[:, 0]), np.max(scan_centered_rot[:, 0]), 100)
-        y = poly_func(x)
-        xy_coords3 = np.vstack((x,y)).transpose()
-        offset = poly_func(0)
-        angle = poly_deriv(0)
+        offset = poly_func(0) # value of polynomial function at x=0 (y-intercept)
+        angle = poly_deriv(0) # slope at x=0
 
         # Fill first buffer
         angle_buffer.append(angle)
@@ -145,10 +143,12 @@ def laser_callback(scan):
         # Determine mean of second buffer
         angle_valid = np.mean(angle_buffer)
         offset_valid = np.mean(offset_buffer)
-        
+
+        # plot and print result
+        x = np.linspace(np.min(scan_centered_rot[:, 0]), np.max(scan_centered_rot[:, 0]), 100)
+        y = poly_func(x)
+        xy_coords3 = np.vstack((x,y)).transpose()        
         print("offset", offset_valid, "angle", np.degrees(angle_valid))
-        # if not np.isnan(angle):
-        #     angle_valid = angle   
 
         end_of_row = check_end_of_row(scan, -np.pi/2, np.pi/2, 3.0, 20)     
     else:
