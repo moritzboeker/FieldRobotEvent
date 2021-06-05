@@ -41,11 +41,10 @@ class MoveRobotPathPattern:
         self.state = "state_wait_at_start"                                                              # [str] state that the state machine starts with
         self.angle_valid = 0.0                                                                          # [rad] valid mid-row angle applicable for robot control
         self.offset_valid = 0.0                                                                         # [m] valid mid-row offset applicable for robot control
-        self.end_of_row = False                                                                         # [True, False] indicating if the end of a row is reached
         self.time_start = rospy.Time.now()                                                              # [rospy.Time] timestamp used in state_headlands
-        self.xy_box = np.zeros((10,2))
-        self.laser_box_headland = np.zeros((10,2))
-        self.xy_scan_all = np.zeros((10,2))
+        self.laser_box_drive_headland = np.zeros((10,2))
+        self.laser_box_detect_row = np.zeros((10,2))
+        self.xy_scan_raw = np.zeros((10,2))
         self.there_was_row = False
         self.there_was_no_row = False
         self.trans_norow2row = False
@@ -178,64 +177,14 @@ class MoveRobotPathPattern:
 
     def laser_callback(self, scan):
         self.scan = scan
-
-        if self.state in ["state_turn_exit", "state_turn_enter", "state_headlands"]:
-            # Extract scan points out of a rectangular box. This box is 
-            # placed around the robot with itself lying in the center.
-            # The scan points falling in this box are evaluated in the 
-            # following states:
-            # state_turn_exit:      use the mean of x-coordinates to turn out of the row correctly
-            # state_turn_enter:     use the mean of y-coordinates to turn into correctly
-            # state_turn_headlands: use the mean of x coordinates to control the robot to pass by
-            #                       some rows
-            self.xy_scan_all = self.scan2cart_w_ign(scan, max_range=30.0)
-            x_min = -1.5*self.row_width
-            x_max = 1.5*self.row_width
-            y_min = -1.5*self.row_width
-            y_max = 1.5*self.row_width
-            self.xy_box = self.laser_box(scan, x_min, x_max, y_min, y_max)
-            self.x_means.append(np.mean(self.xy_box[0,:]))
-            self.y_means.append(np.mean(self.xy_box[1,:]))
-            self.x_mean = np.mean(self.x_means)
-            self.y_mean = np.mean(self.y_means)
-        elif self.state in ["state_in_row"]:
-            angle_increment = scan.angle_increment
-            angle_outer_limit_curr = scan.angle_max
-            angle_outer_limit_targ = np.radians(130)
-            angle_inner_limit_targ = np.radians(20)
-            idx_ranges_outer = int(np.round((angle_outer_limit_curr - angle_outer_limit_targ) / angle_increment))
-            idx_ranges_inner = int(np.round((angle_outer_limit_curr - angle_inner_limit_targ) / angle_increment))
-            
-            scan_cart = self.scan2cart_w_ign(scan, max_range=self.row_width*self.range_factor)
-            scan_left = scan_cart[:, -idx_ranges_inner:-idx_ranges_outer]
-            scan_right = scan_cart[:, idx_ranges_outer:idx_ranges_inner]
-
-            mean_left = np.nanmean(scan_left[1, :])
-            mean_right = np.nanmean(scan_right[1, :])
-
-            offset = mean_right + mean_left
-            if not np.isnan(offset):
-                # If the determined offset is a number, the controller
-                # will get an update with the current offset value. 
-                # Additionally we will reset the used range of the laser scanner.  
-                self.range_factor = 1.0         
-                self.offset_valid = offset
-            else:            
-                # If the determined offset is not a number (nan) a warning is raised and
-                # the controller will not get an update but uses the last valid offset.
-                # Additionally, we will increase the used range of the laser scanner 
-                # each time if the warning persists. This will eventually solve the warning.
-                self.range_factor += 0.001
-
-            self.end_of_row = self.detect_row_end(scan, np.radians(-85), np.radians(85), 5.0)     
-        else:
-            pass
         return None
 
     ##########################################
     ######### States of Statemachine #########
     ##########################################
     def state_wait_at_start(self):
+        # This is because the robot falls down when launching the simulation.
+        # Therefore we need to wait until the robot has come down.
         t = 5.0 # [s] period of time that the robot waits before entering the first row
         if rospy.Time.now() - self.time_start > rospy.Duration.from_sec(t):                
             return "state_in_row"
@@ -243,6 +192,35 @@ class MoveRobotPathPattern:
             return "state_wait_at_start"
 
     def state_in_row(self, pub_vel):
+        # mach das auch wenn nur eine reihe
+        angle_increment = self.scan.angle_increment
+        angle_outer_limit_curr = self.scan.angle_max
+        angle_outer_limit_targ = np.radians(130)
+        angle_inner_limit_targ = np.radians(20)
+        idx_ranges_outer = int(np.round((angle_outer_limit_curr - angle_outer_limit_targ) / angle_increment))
+        idx_ranges_inner = int(np.round((angle_outer_limit_curr - angle_inner_limit_targ) / angle_increment))
+        
+        scan_cart = self.scan2cart_w_ign(self.scan, max_range=self.row_width*self.range_factor)
+        scan_left = scan_cart[:, -idx_ranges_inner:-idx_ranges_outer]
+        scan_right = scan_cart[:, idx_ranges_outer:idx_ranges_inner]
+
+        mean_left = np.nanmean(scan_left[1, :])
+        mean_right = np.nanmean(scan_right[1, :])
+
+        offset = mean_right + mean_left
+        if not np.isnan(offset):
+            # If the determined offset is a number, the controller
+            # will get an update with the current offset value. 
+            # Additionally we will reset the used range of the laser scanner.  
+            self.range_factor = 1.0         
+            self.offset_valid = offset
+        else:            
+            # If the determined offset is not a number (nan) a warning is raised and
+            # the controller will not get an update but uses the last valid offset.
+            # Additionally, we will increase the used range of the laser scanner 
+            # each time if the warning persists. This will eventually solve the warning.
+            self.range_factor += 0.001
+
         # control variables concerning the mid-row-offset
         setpoint_offset = 0                                                                     # [m] setpoint for offset
         error_offset = setpoint_offset - self.offset_valid                                      # [m] control deviation
@@ -257,7 +235,9 @@ class MoveRobotPathPattern:
         cmd_vel.angular.z = act_offset
         pub_vel.publish(cmd_vel)       
 
-        if self.end_of_row:
+        end_of_row = self.detect_row_end(self.scan, np.radians(-85), np.radians(85), 5.0)
+
+        if end_of_row:
             # Check if path pattern has already been completed
             if len(self.path_pattern) > 0:
                 return "state_turn_exit"
@@ -267,6 +247,23 @@ class MoveRobotPathPattern:
             return "state_in_row"
 
     def state_turn_exit(self, pub_vel):
+        # TODO: nimm die lineargeschwqindigkeit von ende der reihe
+        
+        # Extract scan points out of a rectangular box. This box is 
+        # placed around the robot with itself lying in the center.
+        # The scan points falling in this box are evaluated:
+        # use the mean of x-coordinates to turn out of the row correctly
+
+        self.xy_scan_raw = self.scan2cart_w_ign(self.scan, max_range=30.0)
+        # the robot has always to see an uneven number of rows
+        x_min = -1.5*self.row_width
+        x_max = 1.5*self.row_width
+        y_min = -1.5*self.row_width
+        y_max = 1.5*self.row_width
+        self.laser_box_drive_headland = self.laser_box(self.scan, x_min, x_max, y_min, y_max)
+        self.x_means.append(np.mean(self.laser_box_drive_headland[0,:]))
+        self.x_mean = np.mean(self.x_means) 
+
         # extract next turn from path pattern
         # and check direction ('L' or 'R' ?)
         which_turn = self.path_pattern[1]
@@ -305,6 +302,29 @@ class MoveRobotPathPattern:
         # - vel in headland close to previous velocity
         # - increase width of box so that even shortened row ends
         #   will be detected
+
+        # Extract scan points out of a rectangular box. This box is 
+        # placed around the robot with itself lying in the center.
+        # The scan points falling in this box are evaluated:
+        # use the mean of x coordinates to control the robot to pass by
+
+        self.xy_scan_raw = self.scan2cart_w_ign(self.scan, max_range=30.0)
+        # the robot has always to see an uneven number of rows
+        x_min_drive_headland = -1.5*self.row_width
+        x_max_drive_headland = 1.5*self.row_width
+        which_turn = self.path_pattern[1]
+        # TODO: increase box width in y diretion if no scans in headland
+        if which_turn == 'L':
+            y_min_drive_headland = 0.0
+            y_max_drive_headland = 1.5*self.row_width
+        elif which_turn == 'R':
+            y_min_drive_headland = -1.5*self.row_width
+            y_max_drive_headland = 0.0
+        self.laser_box_drive_headland = self.laser_box(self.scan, x_min_drive_headland, x_max_drive_headland, y_min_drive_headland, y_max_drive_headland)
+        self.x_means.append(np.mean(self.laser_box_drive_headland[0,:]))
+        self.y_means.append(np.mean(self.laser_box_drive_headland[1,:]))
+        self.x_mean = np.mean(self.x_means)
+        self.y_mean = np.mean(self.y_means)     
         
         # Extract scan points out of rectangular box.
         # This box is placed in front of the robot so that
@@ -317,22 +337,22 @@ class MoveRobotPathPattern:
         # tower as a corn row.
         box_height = 0.35
         box_width = 2.0
-        x_min = self.row_width - self.x_front_laser_in_base_link - box_height/2
-        x_max = self.row_width - self.x_front_laser_in_base_link + box_height/2
+        x_min_detect_row = self.row_width - self.x_front_laser_in_base_link - box_height/2
+        x_max_detect_row = self.row_width - self.x_front_laser_in_base_link + box_height/2
         which_turn = self.path_pattern[1]
         if which_turn == 'L':
-            y_min = 0.0
-            y_max = box_width
+            y_min_detect_row = 0.0
+            y_max_detect_row = box_width
         elif which_turn == 'R':
-            y_min = -box_width
-            y_max = 0.0
-        self.laser_box_headland = self.laser_box(self.scan, x_min, x_max, y_min, y_max)
+            y_min_detect_row = -box_width
+            y_max_detect_row = 0.0
+        self.laser_box_detect_row = self.laser_box(self.scan, x_min_detect_row, x_max_detect_row, y_min_detect_row, y_max_detect_row)
 
         # Count the scan points within the defined box and
         # identify whether a row is seen or the space in between.
         upper_thresh_scan_points = 20
         lower_thresh_scan_points = 10
-        num_scan_dots = self.laser_box_headland.shape[1]
+        num_scan_dots = self.laser_box_detect_row.shape[1]
         there_is_row = num_scan_dots > upper_thresh_scan_points
         there_is_no_row = num_scan_dots < lower_thresh_scan_points
 
@@ -393,11 +413,11 @@ class MoveRobotPathPattern:
             # orthogonally.
 
             # control variables concerning the x-mean
-            setpoint_offset = 0                                                                     # [m] setpoint for x_mean
-            error_offset = setpoint_offset - self.x_mean                                      # [m] control deviation
-            max_offset = 1.5                                                           # [m] maximum mid-row-offset possible
-            p_gain_offset = self.max_ang_vel_robot/max_offset*self.p_gain_tuning_factor_in_headland      # [(rad*m)/s] gain for p controller
-            act_offset = p_gain_offset*error_offset                                                # [rad/s] actuating variable
+            setpoint_offset = 0                                                                         # [m] setpoint for x_mean
+            error_offset = setpoint_offset - self.x_mean                                                # [m] control deviation
+            max_offset = 1.5                                                                            # [m] maximum mid-row-offset possible
+            p_gain_offset = self.max_ang_vel_robot/max_offset*self.p_gain_tuning_factor_in_headland     # [(rad*m)/s] gain for p controller
+            act_offset = p_gain_offset*error_offset                                                     # [rad/s] actuating variable
                     
             normed_offset_abs = np.abs(self.x_mean / max_offset)
             normed_offset_abs = self.clip(normed_offset_abs, 1.0, 0.0)
@@ -409,6 +429,21 @@ class MoveRobotPathPattern:
             return "state_headlands"
 
     def state_turn_enter(self, pub_vel):
+        # Extract scan points out of a rectangular box. This box is 
+        # placed around the robot with itself lying in the center.
+        # The scan points falling in this box are evaluated:
+        # use the mean of y-coordinates to turn out of the row correctly
+
+        self.xy_scan_raw = self.scan2cart_w_ign(self.scan, max_range=30.0)
+        # the robot has always to see an uneven number of rows
+        x_min = -1.5*self.row_width
+        x_max = 1.5*self.row_width
+        y_min = -1.5*self.row_width
+        y_max = 1.5*self.row_width
+        self.laser_box_drive_headland = self.laser_box(self.scan, x_min, x_max, y_min, y_max)
+        self.y_means.append(np.mean(self.laser_box_drive_headland[0,:]))
+        self.y_mean = np.mean(self.y_means) 
+
         # extract next turn from path pattern
         # and check direction ('L' or 'R' ?)
         which_turn = self.path_pattern[1]
@@ -464,7 +499,7 @@ class MoveRobotPathPattern:
 
     def launch_state_machine(self):
         rate = rospy.Rate(10)
-        # fig = plt.figure(figsize=(7,20))
+        fig = plt.figure(figsize=(7,20))
         while not rospy.is_shutdown() and self.state != "state_done":
             if self.state == "state_wait_at_start":
                 self.state = self.state_wait_at_start()
@@ -487,31 +522,31 @@ class MoveRobotPathPattern:
             print(self.state)
             rate.sleep()
 
-            # resolution = 0.10
-            # hist_min = -1.5*self.row_width
-            # hist_max = 1.5*self.row_width
-            # bins = int(round((hist_max - hist_min) / resolution))
+            resolution = 0.10
+            hist_min = -1.5*self.row_width
+            hist_max = 1.5*self.row_width
+            bins = int(round((hist_max - hist_min) / resolution))
 
-            # plt.subplot(311)
-            # plt.hist(self.xy_box[0,:], bins, label='x', range=[hist_min, hist_max], density=True)
-            # plt.axvline(self.x_mean, color='r', linestyle='dashed', linewidth=2)
-            # plt.legend(loc='upper left')
+            plt.subplot(311)
+            plt.hist(self.laser_box_drive_headland[0,:], bins, label='x', range=[hist_min, hist_max], density=True)
+            plt.axvline(self.x_mean, color='r', linestyle='dashed', linewidth=2)
+            plt.legend(loc='upper left')
 
-            # plt.subplot(312)
-            # plt.hist(self.xy_box[1,:], bins, label='y', range=[hist_min, hist_max], density=True)
-            # plt.axvline(self.y_mean, color='r', linestyle='dashed', linewidth=2)
-            # plt.legend(loc='upper left')
+            plt.subplot(312)
+            plt.hist(self.laser_box_drive_headland[1,:], bins, label='y', range=[hist_min, hist_max], density=True)
+            plt.axvline(self.y_mean, color='r', linestyle='dashed', linewidth=2)
+            plt.legend(loc='upper left')
 
-            # ax1 = plt.subplot(313, aspect='equal')
-            # ax1.set_xlim([-2, 2])
-            # ax1.set_ylim([-2, 2])
-            # plt.grid(color='k', alpha=0.5, linestyle='dashed', linewidth=0.5)
-            # plt.plot(self.xy_scan_all[0,:],self.xy_scan_all[1,:], "ob")
-            # plt.plot(self.laser_box_headland[0,:],self.laser_box_headland[1,:], "oy")
-            # plt.plot(self.x_mean, self.y_mean, "or")
-            # plt.draw()
-            # plt.pause(0.05)
-            # fig.clear()      
+            ax1 = plt.subplot(313, aspect='equal')
+            ax1.set_xlim([-2, 2])
+            ax1.set_ylim([-2, 2])
+            plt.grid(color='k', alpha=0.5, linestyle='dashed', linewidth=0.5)
+            plt.plot(self.xy_scan_raw[0,:],self.xy_scan_raw[1,:], "ob")
+            plt.plot(self.laser_box_detect_row[0,:],self.laser_box_detect_row[1,:], "oy")
+            plt.plot(self.x_mean, self.y_mean, "or")
+            plt.draw()
+            plt.pause(0.05)
+            fig.clear()      
         print("Moving robot according to path pattern completed.")
         return None
 

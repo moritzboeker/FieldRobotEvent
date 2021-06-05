@@ -7,7 +7,7 @@
     <param name="p_gain_tuning_factor_in_headland" value="1.0" />
     <param name="max_lin_vel_in_row" value="0.5" />
     <param name="max_lin_vel_in_headland" value="0.25" />
-    <param name="max_ang_vel_robot" value="1.5707" />
-    <param name="time_for_quater_turn" value="2.5" />       
+    <param name="max_ang_vel_robot" value="1.5707" /> <!-- ermitteln bitteschoen-->
+    <param name="time_for_quater_turn" value="2.5" /> <!-- durch linear geschwindigkeit ersetzen-->      
    </node>
 </launch>
