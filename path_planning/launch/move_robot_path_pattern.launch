@@ -2,11 +2,12 @@
    <master auto="start"/>
  <!-- Run node to send goals -->
    <node pkg="path_planning" type="path_planning.py" name="path_planning" output="screen" >
-    <param name="path_pattern" value="S-1L-1R-1L-F" />
-    <param name="p_gain_angle_factor" value="0.4" />
-    <param name="p_gain_offset_factor" value="0.3" />
-    <param name="ctrl_by_angle" value="True" />
-    <param name="ctrl_by_offset" value="True" />
-    <param name="max_lin_vel" value="0.5" />
+    <param name="path_pattern" textfile="$(find path_planning)/../Virtual_Field_Robot_Event/competition_environment/task_2/map/driving_pattern.txt" />
+    <param name="p_gain_tuning_factor_in_row" value="0.4" />
+    <param name="p_gain_tuning_factor_in_headland" value="1.0" />
+    <param name="max_lin_vel_in_row" value="0.5" />
+    <param name="max_lin_vel_in_headland" value="0.25" />
+    <param name="max_ang_vel_robot" value="1.5707" />
+    <param name="time_for_quater_turn" value="2.5" />       
    </node>
 </launch>
