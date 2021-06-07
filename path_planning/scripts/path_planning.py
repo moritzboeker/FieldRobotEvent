@@ -27,10 +27,10 @@ class MoveRobotPathPattern:
         self.path_pattern = self.path_pattern[1:-1]                                                     # remove S (Start) and F (Finish): S1L2L1L1RF --> 1L2L1L0R
 
         self.scan = LaserScan()                                                                         # [Laserscan] saving the current laser scan
-        self.x_front_laser_in_base_link = 0.12                                                          # [m] x-coordinate of front_laser frame in base_link frame 
-        self.sums_ranges = collections.deque(maxlen=10)                                                 # circular buffer for the sum of ranges used in detect_row_end
-        self.x_means = collections.deque(maxlen=5)                                                      # circular buffer for the means of x-coordinates used in state_turn_exit_row and state_turn_enter_row
-        self.y_means = collections.deque(maxlen=5)                                                      # circular buffer for the means of y-coordinates used in state_turn_exit_row and state_turn_enter_row
+        self.x_front_laser_in_base_link = 0.12                                                          # [m] x-coordinate of front_laser frame in base_link frame
+
+        self.x_means = collections.deque(maxlen=1)                                                      # circular buffer for the means of x-coordinates used in state_turn_exit_row and state_turn_enter_row
+        self.y_means = collections.deque(maxlen=1)                                                      # circular buffer for the means of y-coordinates used in state_turn_exit_row and state_turn_enter_row
         self.x_mean = 0.0                                                                               # [m] mean of means of x-coordinates
         self.y_mean = 0.0                                                                               # [m] mean of means of y-coordinates
         self.x_mean_old = 0.0                                                                           # [m] previous mean of means of x-coordinates
@@ -44,6 +44,7 @@ class MoveRobotPathPattern:
         self.time_start = rospy.Time.now()                                                              # [rospy.Time] timestamp used in state_headlands
         self.laser_box_drive_headland = np.zeros((10,2))
         self.laser_box_detect_row = np.zeros((10,2))
+        self.laser_box_drive_row = np.zeros((10,2)) 
         self.xy_scan_raw = np.zeros((10,2))
         self.there_was_row = False
         self.there_was_no_row = False
@@ -51,17 +52,21 @@ class MoveRobotPathPattern:
         self.trans_row2norow = True
         self.ctr_trans_row2norow = 0
         self.ctr_trans_norow2row = 0
-        self.range_factor = 1.0                                                                         # [1] factor modifiying the used range of the laser scan when the robot can't see something 
         self.collision_ctr = 0                                                                          # [1] stores the scan dots seen in a small laser box right in front of the robot
         self.collision_ctr_previous = 0
         # self.robot_running_crazy = False                                                                # [True, False] True if robot is driving through the field like a headless chicken
         # self.end_of_row_reached = False                                                                 # [True, False] True if robot has reached the end of the row
+        self.time_start_reset_scan_dots = rospy.Time.now()
+        self.scan_left = np.zeros((10,2))
+        self.scan_right = np.zeros((10,2))
+        self.robot_width = 0.43
+        self.robot_length = 0.46
 
     #########################################
     ######### Miscellaneous Methods #########
     #########################################
 
-    def scan2cart_w_ign(self, scan, max_range=30.0):
+    def scan2cart_w_ign(self, scan, min_range=1.0, max_range=30.0):
         """
         Module converting a ROS LaserScan into cartesian coordinates.
         param1 scan:        [LaserScan] raw laser scan
@@ -72,7 +77,9 @@ class MoveRobotPathPattern:
         x = scan.ranges*np.cos(angles)
         y = scan.ranges*np.sin(angles)
         scan_cart = np.array([x, y])
-        ignore_ranges = np.array(scan.ranges) > max_range
+        ignore_ranges_max = np.array(scan.ranges) > max_range
+        ignore_ranges_min = np.array(scan.ranges) < min_range
+        ignore_ranges = np.logical_or(ignore_ranges_max, ignore_ranges_min)
         scan_cart[:, ignore_ranges] = None
         return scan_cart
 
@@ -89,7 +96,7 @@ class MoveRobotPathPattern:
         scan_cart = np.array([x, y])
         return scan_cart
 
-    def detect_row_end(self, scan, angle_min, angle_max, range_max):
+    def detect_row_end(self):
         """
         Module that uses the laser scan to detect whether the robot has reached 
         the end of the row. It does so by summing up the ranges in a cropped
@@ -103,24 +110,14 @@ class MoveRobotPathPattern:
                             in order to say the end of the row is reached.
         return:             [False, True] end of row reached (True) or not (False)
         """
-        thresh_sums_ranges = self.row_width # [m] threshold the sum of ranges is evaluated with
-        # crop the laser scan
-        if scan.angle_min > angle_min:
-            angle_min = scan.angle_min
-        if scan.angle_max < angle_max:
-            angle_max = scan.angle_max
-        num_ranges = len(scan.ranges)
-        idx_lower = int(num_ranges/2 + np.round(angle_min / scan.angle_increment))
-        idx_upper = int(num_ranges/2 + np.round(angle_max / scan.angle_increment))
-        scan_cropped = np.array(scan.ranges[idx_lower:idx_upper])
-        # filter ranges above range_max
-        allow_ranges = scan_cropped <= range_max
-        scan_cropped = scan_cropped[allow_ranges]
-        # sum up all ranges and append them to the circular deque buffer
-        self.sums_ranges.append(scan_cropped.sum())
-        # if the median of the whole deque is below the defined threshold,
-        # this will be considered as the end of the row.
-        end_of_row = np.median(self.sums_ranges) < thresh_sums_ranges
+
+        x_min = -0.5
+        x_max = 1.0
+        y_min = -3.5*self.row_width
+        y_max = 3.5*self.row_width
+        self.laser_box_drive_row = self.laser_box(self.scan, x_min, x_max, y_min, y_max)
+        self.x_mean = np.mean(self.laser_box_drive_row[0,:])
+        end_of_row = self.x_mean < -0.20        
         return end_of_row
 
     def detect_robot_running_crazy(self, scan, collisions_thresh, collision_reset_time):
@@ -147,19 +144,17 @@ class MoveRobotPathPattern:
         y_max = nose_box_width/2
         nose_box = self.laser_box(scan, x_min, x_max, y_min, y_max)
         num_collisions = nose_box.shape[1]
+        self.collision_ctr_previous = self.collision_ctr
         self.collision_ctr += num_collisions
         robot_running_crazy = self.collision_ctr > collisions_thresh
 
-        self.collision_ctr_previous = self.collision_ctr
         collision_rate = self.collision_ctr - self.collision_ctr_previous
-        if collision_rate < 5:
+        if collision_rate == 0:
             if rospy.Time.now() - self.time_start_reset_scan_dots > rospy.Duration.from_sec(collision_reset_time):
                 self.collision_ctr = 0
                 self.collision_ctr_previous = 0
         else:
             self.time_start_reset_scan_dots = rospy.Time.now()
-
-        print("scan points", num_collisions, "self.sum_scan_dots", self.collision_ctr)
         return robot_running_crazy
 
     
@@ -226,54 +221,65 @@ class MoveRobotPathPattern:
         
         angle_increment = self.scan.angle_increment
         angle_outer_limit_curr = self.scan.angle_max
-        angle_outer_limit_targ = np.radians(130)
-        angle_inner_limit_targ = np.radians(20)
-        idx_ranges_outer = int(np.round((angle_outer_limit_curr - angle_outer_limit_targ) / angle_increment))
-        idx_ranges_inner = int(np.round((angle_outer_limit_curr - angle_inner_limit_targ) / angle_increment))
+        angle_outer_limit_targ = np.radians(135)
+        angle_inner_limit_targ = np.radians(22.5)
+        idx_ranges_outer = int(np.round((angle_outer_limit_curr - angle_outer_limit_targ) / angle_increment) + 1)
+        idx_ranges_inner = int(np.round((angle_outer_limit_curr - angle_inner_limit_targ) / angle_increment) + 1)
+        scan_cart = self.scan2cart_w_ign(self.scan, min_range=0.0, max_range=self.row_width)
+        self.scan_left = scan_cart[:, -idx_ranges_inner:-idx_ranges_outer]
+        self.scan_right = scan_cart[:, idx_ranges_outer:idx_ranges_inner]
+
+        mean_left = np.nanmean(self.scan_left[1, :])
+        mean_right = np.nanmean(self.scan_right[1, :])
         
-        scan_cart = self.scan2cart_w_ign(self.scan, max_range=self.row_width*self.range_factor)
-        scan_left = scan_cart[:, -idx_ranges_inner:-idx_ranges_outer]
-        scan_right = scan_cart[:, idx_ranges_outer:idx_ranges_inner]
 
-        mean_left = np.nanmean(scan_left[1, :])
-        mean_right = np.nanmean(scan_right[1, :])
-
-        if np.isnan(mean_left):
-            mean_left = mean_right + self.row_width
-        elif np.isnan(mean_right):
-            mean_right = mean_left - self.row_width
-
-        offset = mean_right + mean_left
+        if np.isnan(mean_left) and not np.isnan(mean_right):
+            offset = mean_right + self.row_width/2
+        elif np.isnan(mean_right) and not np.isnan(mean_left):
+            offset = mean_left - self.row_width/2
+        else:
+            offset = mean_right + mean_left
 
         if not np.isnan(offset):
             # If the determined offset is a number, the controller
-            # will get an update with the current offset value. 
-            # Additionally we will reset the used range of the laser scanner.  
-            self.range_factor = 1.0         
-            self.offset_valid = offset
+            # will get an update with the current offset value.
+            alpha = 0.2
+            self.offset_valid = alpha * self.offset_valid + (1-alpha) * offset
         else:            
             # If the determined offset is not a number (nan) a warning is raised and
-            # the controller will not get an update but uses the last valid offset.
+            # the controller will not get an update but uses an angle of 0.0.
             # Additionally, we will increase the used range of the laser scanner 
             # each time if the warning persists. This will eventually solve the warning.
-            self.range_factor += 0.001
+            self.offset_valid = 0.0
+            
 
         # control variables concerning the mid-row-offset
-        setpoint_offset = 0                                                                     # [m] setpoint for offset
-        error_offset = setpoint_offset - self.offset_valid                                      # [m] control deviation
-        max_offset = self.row_width/2                                                           # [m] maximum mid-row-offset possible
-        p_gain_offset = self.max_ang_vel_robot/max_offset*self.p_gain_tuning_factor_in_row      # [(rad*m)/s] gain for p controller
-        act_offset = -p_gain_offset*error_offset                                                # [rad/s] actuating variable
+        # setpoint_offset = 0                                                                     # [m] setpoint for offset
+        # error_offset = setpoint_offset - self.offset_valid                                      # [m] control deviation
         
-        normed_offset_abs = np.abs(self.offset_valid / max_offset)
-        normed_offset_abs = self.clip(normed_offset_abs, 1.0, 0.0)
+        max_offset = (self.row_width/2) * 0.9                                                         # [m] maximum mid-row-offset possible
+        normed_offset = self.offset_valid / max_offset
+        normed_offset = self.clip(normed_offset, 1.0, -1.0)
+        print('offset_valid', self.offset_valid, "normed_offset", normed_offset)
         cmd_vel = Twist()
-        cmd_vel.linear.x = self.max_lin_vel_in_row * (1 - normed_offset_abs)
-        cmd_vel.angular.z = act_offset
-        pub_vel.publish(cmd_vel)       
+        #cmd_vel.linear.x = self.max_lin_vel_in_row * (1 - normed_offset**2)
+        cmd_vel.linear.x = self.max_lin_vel_in_row * (1 - np.abs(normed_offset))
+        cmd_vel.angular.z = self.max_ang_vel_robot * normed_offset
+        #cmd_vel.angular.z = self.max_ang_vel_robot * np.sign(normed_offset) * normed_offset**2
+        pub_vel.publish(cmd_vel)
 
-        end_of_row = self.detect_row_end(self.scan, np.radians(-85), np.radians(85), 2*self.row_width)
-        robot_running_crazy = self.detect_robot_running_crazy(self.scan, collisions_thresh=100, collision_reset_time=10)
+        # p_gain_offset = self.max_ang_vel_robot/max_offset*self.p_gain_tuning_factor_in_row      # [(rad*m)/s] gain for p controller
+        # act_offset = -p_gain_offset*error_offset                                                # [rad/s] actuating variable
+        
+        # normed_offset_abs = np.abs(self.offset_valid / max_offset)
+        # normed_offset_abs = self.clip(normed_offset_abs, 1.0, 0.0)
+        # cmd_vel = Twist()
+        # cmd_vel.linear.x = self.max_lin_vel_in_row * (1 - normed_offset_abs)
+        # cmd_vel.angular.z = act_offset
+        # pub_vel.publish(cmd_vel)       
+
+        end_of_row = self.detect_row_end()
+        robot_running_crazy = self.detect_robot_running_crazy(self.scan, collisions_thresh=40, collision_reset_time=2)
 
         if robot_running_crazy:
             return "state_error"
@@ -310,13 +316,15 @@ class MoveRobotPathPattern:
         which_turn = self.path_pattern[1]
         if which_turn == 'L':
             turn = self.turn_l
+            radius = self.row_width/2 + self.offset_valid
         elif which_turn == 'R':
             turn = self.turn_r
+            radius = self.row_width/2 - self.offset_valid
 
         # TODO:
         # angular velocity determined by linear velocity or last cmd_vel.lin.x
         ang_z = turn                            # [rad]
-        dist_x = self.row_width/2 * abs(ang_z)  # [m]
+        dist_x = radius * abs(ang_z)            # [m]
         t = self.time_for_quater_turn           # [s]
 
         # Check if the same row is to be entered again (-> 0)
@@ -328,9 +336,10 @@ class MoveRobotPathPattern:
         if which_row == 0:
             dist_x = 0.0
 
-        x_close_to_zero = abs(self.x_mean) < 5e-2
-        x_zero_crossing = self.x_mean*self.x_mean_old < 0.0
-        if x_close_to_zero or x_zero_crossing:
+        # x_close_to_zero = abs(self.x_mean) < 5e-2
+        # x_zero_crossing = self.x_mean*self.x_mean_old < 0.0
+        # if x_close_to_zero or x_zero_crossing:
+        if self.x_mean > 0.1:
             self.time_start = rospy.Time.now()
             # reset variable
             self.x_mean_old = 0.0
@@ -487,7 +496,7 @@ class MoveRobotPathPattern:
         y_min = -1.5*self.row_width
         y_max = 1.5*self.row_width
         self.laser_box_drive_headland = self.laser_box(self.scan, x_min, x_max, y_min, y_max)
-        self.y_means.append(np.mean(self.laser_box_drive_headland[0,:]))
+        self.y_means.append(np.mean(self.laser_box_drive_headland[1,:]))
         self.y_mean = np.mean(self.y_means) 
 
         # extract next turn from path pattern
@@ -499,7 +508,7 @@ class MoveRobotPathPattern:
             turn = self.turn_r
 
         ang_z = turn                            # [rad]
-        dist_x = self.row_width/2 * abs(ang_z)  # [m]
+        dist_x = self.row_width/2 * 0.9 * abs(ang_z)  # [m]
         t = self.time_for_quater_turn           # [s]
 
         # Check if the same row is to be entered again (-> 0)
@@ -529,13 +538,13 @@ class MoveRobotPathPattern:
 
     def state_idle(self, pub_vel):
         cmd_vel = Twist()
-        cmd_vel.linear.x = 0.5
+        cmd_vel.linear.x = 0.0
         cmd_vel.angular.z = 0.0
         pub_vel.publish(cmd_vel)
-        self.detect_robot_running_crazy(self.scan)
         return "state_idle"
 
     def state_error(self):
+        print("self.sum_scan_dots", self.collision_ctr)
         print("An error has occured and the robot is in safeguard stop.")
         return "state_finished"
     
@@ -567,9 +576,9 @@ class MoveRobotPathPattern:
             elif self.state == "state_crop_path_pattern":
                 self.state = self.state_crop_path_pattern()
             elif self.state == "state_idle":
-                self.state = self.state_finished(self.pub_vel)
-            elif self.state == "state_finished":
                 self.state = self.state_idle(self.pub_vel)
+            elif self.state == "state_finished":
+                self.state = self.state_finished(self.pub_vel)
             elif self.state == "state_error":
                 self.state = self.state_error()
             else:
@@ -596,8 +605,8 @@ class MoveRobotPathPattern:
             ax1.set_xlim([-2, 2])
             ax1.set_ylim([-2, 2])
             plt.grid(color='k', alpha=0.5, linestyle='dashed', linewidth=0.5)
-            plt.plot(self.xy_scan_raw[0,:],self.xy_scan_raw[1,:], "ob")
-            plt.plot(self.laser_box_detect_row[0,:],self.laser_box_detect_row[1,:], "oy")
+            plt.plot(self.scan_left[0,:],self.scan_left[1,:], "ob")
+            plt.plot(self.scan_right[0,:],self.scan_right[1,:], "oy")
             plt.plot(self.x_mean, self.y_mean, "or")
             plt.draw()
             plt.pause(0.05)
