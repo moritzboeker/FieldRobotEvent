@@ -3,7 +3,7 @@
 	<!-- $roslaunch openni_launch openni.launch depth_registration:=true -->
 	
 	<arg name="object_prefix" default="object"/>
-	<arg name="objects_path"  default="$(find find_object_2d)/obj_test_trans"/>
+	<arg name="objects_path"  default="$(find find_object_2d)/current"/>
 	<arg name="gui"           default="true"/>
 	<arg name="approx_sync"   default="true"/>
 	<arg name="pnp"           default="true"/>
