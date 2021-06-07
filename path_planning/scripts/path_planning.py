@@ -16,7 +16,6 @@ class MoveRobotPathPattern:
     def __init__(self):
         self.sub_laser = rospy.Subscriber("front/scan", LaserScan, self.laser_callback, queue_size=3)   # [Laserscan] subscriber on /front/scan
         self.pub_vel = rospy.Publisher("cmd_vel", Twist, queue_size=3)                                  # [Twist] publisher on /cmd_vel
-        self.p_gain_tuning_factor_in_row = rospy.get_param('~p_gain_tuning_factor_in_row')              # [1.0] factor used in the gain of the p-controller applied to the mid-row offset for driving within a row
         self.p_gain_tuning_factor_in_headland = rospy.get_param('~p_gain_tuning_factor_in_headland')    # [1.0] factor used in the gain of the p-controller applied to the mid-row offset for driving within the headland
         self.max_lin_vel_in_row = rospy.get_param('~max_lin_vel_in_row')                                # [m/s] maximum linear velocity for driving within a row
         self.max_lin_vel_in_headland= rospy.get_param('~max_lin_vel_in_headland')                       # [m/s] maximum linear velocity for driving within the headland
@@ -219,6 +218,7 @@ class MoveRobotPathPattern:
         # TODO:
         # bring angular velocity in dependence of max_lin_vel_in_row
         
+        # # This has been replaced by the two laser boxes
         # angle_increment = self.scan.angle_increment
         # angle_outer_limit_curr = self.scan.angle_max
         # angle_outer_limit_targ = np.radians(135)
@@ -229,22 +229,28 @@ class MoveRobotPathPattern:
         # self.scan_left = scan_cart[:, -idx_ranges_inner:-idx_ranges_outer]
         # self.scan_right = scan_cart[:, idx_ranges_outer:idx_ranges_inner]
 
-        self.scan_left = self.laser_box(self.scan, -1.0, 1.5, self.robot_width/2, self.row_width)
-        self.scan_right = self.laser_box(self.scan, -1.0, 1.5, -self.row_width, -self.robot_width/2)
+        self.scan_left = self.laser_box(self.scan, -1.0, 1.4, self.robot_width/2, self.row_width)
+        self.scan_right = self.laser_box(self.scan, -1.0, 1.4, -self.row_width, -self.robot_width/2)
 
         mean_left = np.nanmean(self.scan_left[1, :])
         mean_right = np.nanmean(self.scan_right[1, :])
         
-        print("mean_left", mean_left, "mean_right", mean_right)
-        print("mean_left-mean_right", mean_left-mean_right)
-        # Problem: Wir fahren nicht zwischen Reihen sondern auf einer Reihe:
+        # Solution for driving on row instead of in between rows
         if mean_left - mean_right > 1.2*self.row_width:            
             if abs(mean_left) < abs(mean_right):
                 mean_right = -self.row_width +  mean_left
             elif abs(mean_right) < abs(mean_left):
                 mean_left = self.row_width + mean_right
-        print("mean_left_new", mean_left, "mean_right_new", mean_right)
 
+        # # Solution for having one mean determined wrongly
+        # # This did not work because the robot did not drive a curve
+        # if abs(mean_left) > 1.2*self.row_width/2:
+        #     mean_left = self.row_width + mean_right
+        # if abs(mean_right) > 1.2*self.row_width/2:
+        #     mean_right = -self.row_width + mean_left
+        # print("mean_left", mean_left, "mean_right", mean_right)
+
+        # Solution for not having a row on one or both of the sides
         if np.isnan(mean_left) and not np.isnan(mean_right):
             offset = mean_right + self.row_width/2
         elif np.isnan(mean_right) and not np.isnan(mean_left):
@@ -262,36 +268,20 @@ class MoveRobotPathPattern:
             # the controller will not get an update but uses an angle of 0.0.
             # Additionally, we will increase the used range of the laser scanner 
             # each time if the warning persists. This will eventually solve the warning.
-            self.offset_valid = 0.0
-            
-
-        # control variables concerning the mid-row-offset
-        # setpoint_offset = 0                                                                     # [m] setpoint for offset
-        # error_offset = setpoint_offset - self.offset_valid                                      # [m] control deviation
+            self.offset_valid = 0.0            
         
         max_offset = (self.row_width/2) * 0.9                                                         # [m] maximum mid-row-offset possible
         normed_offset = self.offset_valid / max_offset
         normed_offset = self.clip(normed_offset, 1.0, -1.0)
-        print('offset_valid', self.offset_valid, "normed_offset", normed_offset)
         cmd_vel = Twist()
         #cmd_vel.linear.x = self.max_lin_vel_in_row * (1 - normed_offset**2)
+        #cmd_vel.angular.z = self.max_ang_vel_robot * np.sign(normed_offset) * normed_offset**2
         cmd_vel.linear.x = self.max_lin_vel_in_row * (1 - np.abs(normed_offset))
         cmd_vel.angular.z = self.max_ang_vel_robot * normed_offset
-        #cmd_vel.angular.z = self.max_ang_vel_robot * np.sign(normed_offset) * normed_offset**2
         pub_vel.publish(cmd_vel)
 
-        # p_gain_offset = self.max_ang_vel_robot/max_offset*self.p_gain_tuning_factor_in_row      # [(rad*m)/s] gain for p controller
-        # act_offset = -p_gain_offset*error_offset                                                # [rad/s] actuating variable
-        
-        # normed_offset_abs = np.abs(self.offset_valid / max_offset)
-        # normed_offset_abs = self.clip(normed_offset_abs, 1.0, 0.0)
-        # cmd_vel = Twist()
-        # cmd_vel.linear.x = self.max_lin_vel_in_row * (1 - normed_offset_abs)
-        # cmd_vel.angular.z = act_offset
-        # pub_vel.publish(cmd_vel)       
-
         end_of_row = self.detect_row_end()
-        robot_running_crazy = self.detect_robot_running_crazy(self.scan, collisions_thresh=40, collision_reset_time=2)
+        robot_running_crazy = self.detect_robot_running_crazy(self.scan, collisions_thresh=40, collision_reset_time=3)
 
         if robot_running_crazy:
             return "state_error"
@@ -334,7 +324,7 @@ class MoveRobotPathPattern:
             radius = self.row_width/2 - self.offset_valid
 
         # TODO:
-        # angular velocity determined by linear velocity or last cmd_vel.lin.x
+        # angular velocity determined by linear velocity in rosparam or last cmd_vel.lin.x
         ang_z = turn                            # [rad]
         dist_x = radius * abs(ang_z)            # [m]
         t = self.time_for_quater_turn           # [s]
@@ -454,7 +444,6 @@ class MoveRobotPathPattern:
         which_row = int(self.path_pattern[0])
         set_transitions = 2 * which_row - 3
 
-        print(sum_transitions, "/", set_transitions, "points", num_scan_dots)
         target_row_reached = sum_transitions >= set_transitions
         if target_row_reached:
             self.there_was_row = False
@@ -520,7 +509,7 @@ class MoveRobotPathPattern:
             turn = self.turn_r
 
         ang_z = turn                            # [rad]
-        dist_x = self.row_width/2 * 0.9 * abs(ang_z)  # [m]
+        dist_x = self.row_width/2 * abs(ang_z)  # [m]
         t = self.time_for_quater_turn           # [s]
 
         # Check if the same row is to be entered again (-> 0)
@@ -556,7 +545,6 @@ class MoveRobotPathPattern:
         return "state_idle"
 
     def state_error(self):
-        print("self.sum_scan_dots", self.collision_ctr)
         print("An error has occured and the robot is in safeguard stop.")
         return "state_finished"
     
@@ -573,7 +561,7 @@ class MoveRobotPathPattern:
 
     def launch_state_machine(self):
         rate = rospy.Rate(10)
-        fig = plt.figure(figsize=(7,20))
+        # fig = plt.figure(figsize=(7,20))
         while not rospy.is_shutdown() and self.state != "state_done":
             if self.state == "state_wait_at_start":
                 self.state = self.state_wait_at_start(self.pub_vel)
@@ -598,31 +586,31 @@ class MoveRobotPathPattern:
             print(self.state)
             rate.sleep()
 
-            resolution = 0.10
-            hist_min = -1.5*self.row_width
-            hist_max = 1.5*self.row_width
-            bins = int(round((hist_max - hist_min) / resolution))
+            # resolution = 0.10
+            # hist_min = -1.5*self.row_width
+            # hist_max = 1.5*self.row_width
+            # bins = int(round((hist_max - hist_min) / resolution))
 
-            plt.subplot(311)
-            plt.hist(self.laser_box_drive_headland[0,:], bins, label='x', range=[hist_min, hist_max], density=True)
-            plt.axvline(self.x_mean, color='r', linestyle='dashed', linewidth=2)
-            plt.legend(loc='upper left')
+            # plt.subplot(311)
+            # plt.hist(self.laser_box_drive_headland[0,:], bins, label='x', range=[hist_min, hist_max], density=True)
+            # plt.axvline(self.x_mean, color='r', linestyle='dashed', linewidth=2)
+            # plt.legend(loc='upper left')
 
-            plt.subplot(312)
-            plt.hist(self.laser_box_drive_headland[1,:], bins, label='y', range=[hist_min, hist_max], density=True)
-            plt.axvline(self.y_mean, color='r', linestyle='dashed', linewidth=2)
-            plt.legend(loc='upper left')
+            # plt.subplot(312)
+            # plt.hist(self.laser_box_drive_headland[1,:], bins, label='y', range=[hist_min, hist_max], density=True)
+            # plt.axvline(self.y_mean, color='r', linestyle='dashed', linewidth=2)
+            # plt.legend(loc='upper left')
 
-            ax1 = plt.subplot(313, aspect='equal')
-            ax1.set_xlim([-2, 2])
-            ax1.set_ylim([-2, 2])
-            plt.grid(color='k', alpha=0.5, linestyle='dashed', linewidth=0.5)
-            plt.plot(self.scan_left[0,:],self.scan_left[1,:], "ob")
-            plt.plot(self.scan_right[0,:],self.scan_right[1,:], "oy")
-            plt.plot(self.x_mean, self.y_mean, "or")
-            plt.draw()
-            plt.pause(0.05)
-            fig.clear()      
+            # ax1 = plt.subplot(313, aspect='equal')
+            # ax1.set_xlim([-2, 2])
+            # ax1.set_ylim([-2, 2])
+            # plt.grid(color='k', alpha=0.5, linestyle='dashed', linewidth=0.5)
+            # plt.plot(self.scan_left[0,:],self.scan_left[1,:], "ob")
+            # plt.plot(self.scan_right[0,:],self.scan_right[1,:], "oy")
+            # plt.plot(self.x_mean, self.y_mean, "or")
+            # plt.draw()
+            # plt.pause(0.05)
+            # fig.clear()      
         print("Moving robot according to path pattern completed.")
         return None
 

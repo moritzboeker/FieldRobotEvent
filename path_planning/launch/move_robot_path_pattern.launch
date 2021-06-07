@@ -4,11 +4,10 @@
    <node pkg="path_planning" type="path_planning.py" name="path_planning" output="screen" >
     <!-- param name="path_pattern" textfile="$(find path_planning)/../Virtual_Field_Robot_Event/competition_environment/task_2/map/driving_pattern.txt" /-->
     <param name="path_pattern" value="S 1L 1R 1L 1R 1L 1R 1L 1R 1L 1R 0L 1R 1L 1R 1L 1R 1L 1R 1L 1R F"/>
-    <param name="p_gain_tuning_factor_in_row" value="0.20" />
     <param name="p_gain_tuning_factor_in_headland" value="1.0" />
-    <param name="max_lin_vel_in_row" value="1.0" /> <!--0.6-->
+    <param name="max_lin_vel_in_row" value="0.9" /> <!--0.6-->
     <param name="max_lin_vel_in_headland" value="0.25" /> <!--0.25-->
-    <param name="max_ang_vel_robot" value="1.5" /> <!--0.90-->
+    <param name="max_ang_vel_robot" value="1.25" /> <!--0.90-->
     <param name="time_for_quater_turn" value="2.5" /> <!-- durch linear geschwindigkeit ersetzen-->      
    </node>
 </launch>
