@@ -29,8 +29,8 @@ class MoveRobotPathPattern:
         self.scan = LaserScan()                                                                         # [Laserscan] saving the current laser scan
         self.x_front_laser_in_base_link = 0.12                                                          # [m] x-coordinate of front_laser frame in base_link frame 
         self.sums_ranges = collections.deque(maxlen=10)                                                 # circular buffer for the sum of ranges used in detect_row_end
-        self.x_means = collections.deque(maxlen=5)                                                      # circular buffer for the means of x-coordinates used in state_turn_exit and state_turn_enter
-        self.y_means = collections.deque(maxlen=5)                                                      # circular buffer for the means of y-coordinates used in state_turn_exit and state_turn_enter
+        self.x_means = collections.deque(maxlen=5)                                                      # circular buffer for the means of x-coordinates used in state_turn_exit_row and state_turn_enter_row
+        self.y_means = collections.deque(maxlen=5)                                                      # circular buffer for the means of y-coordinates used in state_turn_exit_row and state_turn_enter_row
         self.x_mean = 0.0                                                                               # [m] mean of means of x-coordinates
         self.y_mean = 0.0                                                                               # [m] mean of means of y-coordinates
         self.x_mean_old = 0.0                                                                           # [m] previous mean of means of x-coordinates
@@ -52,7 +52,10 @@ class MoveRobotPathPattern:
         self.ctr_trans_row2norow = 0
         self.ctr_trans_norow2row = 0
         self.range_factor = 1.0                                                                         # [1] factor modifiying the used range of the laser scan when the robot can't see something 
-        self.sum_scan_dots = 0                                                                          # [1] stores the scan dots seen in a small laser box right in front of the robot
+        self.collision_ctr = 0                                                                          # [1] stores the scan dots seen in a small laser box right in front of the robot
+        self.collision_ctr_previous = 0
+        # self.robot_running_crazy = False                                                                # [True, False] True if robot is driving through the field like a headless chicken
+        # self.end_of_row_reached = False                                                                 # [True, False] True if robot has reached the end of the row
 
     #########################################
     ######### Miscellaneous Methods #########
@@ -100,7 +103,7 @@ class MoveRobotPathPattern:
                             in order to say the end of the row is reached.
         return:             [False, True] end of row reached (True) or not (False)
         """
-        thresh_sums_ranges = 1.0 # [m] threshold the sum of ranges is evaluated with
+        thresh_sums_ranges = self.row_width # [m] threshold the sum of ranges is evaluated with
         # crop the laser scan
         if scan.angle_min > angle_min:
             angle_min = scan.angle_min
@@ -120,8 +123,22 @@ class MoveRobotPathPattern:
         end_of_row = np.median(self.sums_ranges) < thresh_sums_ranges
         return end_of_row
 
-    def detect_robot_running_crazy(self, scan):
-        thresh_sum_scan_dots = 30
+    def detect_robot_running_crazy(self, scan, collisions_thresh, collision_reset_time):
+        """
+        Method that counts the number of collisions within a small laser box that
+        is placed directly in front of the robot. If the robot is hitting several
+        plants, the number of collisions will rise. If their sum is ecxeeding a
+        threshold, the method will return True, indicating that the robot is running
+        crazy now and needs to be turned off.
+        param1 scan:                    [LaserScan] raw laser scan
+        param2 collisions_thresh:       [1] threshold value for the sum of scan points 
+                                        above which it is recognized that the robot is 
+                                        going crazy.
+        param3 collision_reset_time:    [s] if the robot is driving this amount of time 
+                                        without collision,
+                                        the collision counter will be reset
+        """
+        
         nose_box_width = 0.10
         nose_box_height = 0.05
         x_min = 0.23 - nose_box_height/2
@@ -129,13 +146,21 @@ class MoveRobotPathPattern:
         y_min = -nose_box_width/2
         y_max = nose_box_width/2
         nose_box = self.laser_box(scan, x_min, x_max, y_min, y_max)
-        num_scan_dots = nose_box.shape[1]
-        self.sum_scan_dots += num_scan_dots
-        print("scan points", num_scan_dots, "self.sum_scan_dots", self.sum_scan_dots)
-        if self.sum_scan_dots > thresh_sum_scan_dots:
-            # This does not work here
-            print("entered state error")
-            self.state == "state_error"
+        num_collisions = nose_box.shape[1]
+        self.collision_ctr += num_collisions
+        robot_running_crazy = self.collision_ctr > collisions_thresh
+
+        self.collision_ctr_previous = self.collision_ctr
+        collision_rate = self.collision_ctr - self.collision_ctr_previous
+        if collision_rate < 5:
+            if rospy.Time.now() - self.time_start_reset_scan_dots > rospy.Duration.from_sec(collision_reset_time):
+                self.collision_ctr = 0
+                self.collision_ctr_previous = 0
+        else:
+            self.time_start_reset_scan_dots = rospy.Time.now()
+
+        print("scan points", num_collisions, "self.sum_scan_dots", self.collision_ctr)
+        return robot_running_crazy
 
     
     def laser_box(self, scan, x_min, x_max, y_min, y_max):
@@ -182,9 +207,13 @@ class MoveRobotPathPattern:
     ##########################################
     ######### States of Statemachine #########
     ##########################################
-    def state_wait_at_start(self):
+    def state_wait_at_start(self, pub_vel):
         # This is because the robot falls down when launching the simulation.
         # Therefore we need to wait until the robot has come down.
+        cmd_vel = Twist()
+        cmd_vel.linear.x = 0.0
+        cmd_vel.angular.z = 0.0
+        pub_vel.publish(cmd_vel)
         t = 5.0 # [s] period of time that the robot waits before entering the first row
         if rospy.Time.now() - self.time_start > rospy.Duration.from_sec(t):                
             return "state_in_row"
@@ -192,7 +221,9 @@ class MoveRobotPathPattern:
             return "state_wait_at_start"
 
     def state_in_row(self, pub_vel):
-        # mach das auch wenn nur eine reihe
+        # TODO:
+        # bring angular velocity in dependence of max_lin_vel_in_row
+        
         angle_increment = self.scan.angle_increment
         angle_outer_limit_curr = self.scan.angle_max
         angle_outer_limit_targ = np.radians(130)
@@ -207,7 +238,13 @@ class MoveRobotPathPattern:
         mean_left = np.nanmean(scan_left[1, :])
         mean_right = np.nanmean(scan_right[1, :])
 
+        if np.isnan(mean_left):
+            mean_left = mean_right + self.row_width
+        elif np.isnan(mean_right):
+            mean_right = mean_left - self.row_width
+
         offset = mean_right + mean_left
+
         if not np.isnan(offset):
             # If the determined offset is a number, the controller
             # will get an update with the current offset value. 
@@ -235,19 +272,23 @@ class MoveRobotPathPattern:
         cmd_vel.angular.z = act_offset
         pub_vel.publish(cmd_vel)       
 
-        end_of_row = self.detect_row_end(self.scan, np.radians(-85), np.radians(85), 5.0)
+        end_of_row = self.detect_row_end(self.scan, np.radians(-85), np.radians(85), 2*self.row_width)
+        robot_running_crazy = self.detect_robot_running_crazy(self.scan, collisions_thresh=100, collision_reset_time=10)
 
-        if end_of_row:
+        if robot_running_crazy:
+            return "state_error"
+        elif end_of_row:
             # Check if path pattern has already been completed
             if len(self.path_pattern) > 0:
-                return "state_turn_exit"
+                return "state_turn_exit_row"
             else:
-                "state_done"
+                "state_finished"
         else:
             return "state_in_row"
 
-    def state_turn_exit(self, pub_vel):
-        # TODO: nimm die lineargeschwqindigkeit von ende der reihe
+    def state_turn_exit_row(self, pub_vel):
+        # TODO: 
+        # take the linear velocity the robot has at the end of the row
         
         # Extract scan points out of a rectangular box. This box is 
         # placed around the robot with itself lying in the center.
@@ -272,6 +313,8 @@ class MoveRobotPathPattern:
         elif which_turn == 'R':
             turn = self.turn_r
 
+        # TODO:
+        # angular velocity determined by linear velocity or last cmd_vel.lin.x
         ang_z = turn                            # [rad]
         dist_x = self.row_width/2 * abs(ang_z)  # [m]
         t = self.time_for_quater_turn           # [s]
@@ -295,13 +338,12 @@ class MoveRobotPathPattern:
         else:
             self.move_robot(pub_vel, dist_x, ang_z, t)
             self.x_mean_old = self.x_mean
-            return "state_turn_exit"
+            return "state_turn_exit_row"
 
     def state_headlands(self, pub_vel):
-        # TODO: 
-        # - vel in headland close to previous velocity
-        # - increase width of box so that even shortened row ends
-        #   will be detected
+        # TODO:
+        # take the linear velocity the robot has at the end of the turn
+        # increase width of laser_box_detect_row so that even shortened row ends will be detected
 
         # Extract scan points out of a rectangular box. This box is 
         # placed around the robot with itself lying in the center.
@@ -313,7 +355,6 @@ class MoveRobotPathPattern:
         x_min_drive_headland = -1.5*self.row_width
         x_max_drive_headland = 1.5*self.row_width
         which_turn = self.path_pattern[1]
-        # TODO: increase box width in y diretion if no scans in headland
         if which_turn == 'L':
             y_min_drive_headland = 0.0
             y_max_drive_headland = 1.5*self.row_width
@@ -335,8 +376,9 @@ class MoveRobotPathPattern:
         # exited a row via a right turn, the box is set to the right.
         # This prevents the robot from accidently seeing the qr-code 
         # tower as a corn row.
-        box_height = 0.35
-        box_width = 2.0
+
+        box_height = self.row_width/3
+        box_width = 3.0 # in case the robot is 1 m within headland and 1 m of plants are missing at the end of the row
         x_min_detect_row = self.row_width - self.x_front_laser_in_base_link - box_height/2
         x_max_detect_row = self.row_width - self.x_front_laser_in_base_link + box_height/2
         which_turn = self.path_pattern[1]
@@ -350,6 +392,8 @@ class MoveRobotPathPattern:
 
         # Count the scan points within the defined box and
         # identify whether a row is seen or the space in between.
+        # TODO:
+        # bestimme thresholds emprisch
         upper_thresh_scan_points = 20
         lower_thresh_scan_points = 10
         num_scan_dots = self.laser_box_detect_row.shape[1]
@@ -398,7 +442,7 @@ class MoveRobotPathPattern:
             self.trans_row2norow = True
             self.ctr_trans_row2norow = 0
             self.ctr_trans_norow2row = 0
-            return "state_turn_enter"
+            return "state_turn_enter_row"
         else:
             # The robot is passing by some rows.
             # When the current section of path pattern is e.g. 3L,
@@ -415,6 +459,8 @@ class MoveRobotPathPattern:
             # control variables concerning the x-mean
             setpoint_offset = 0                                                                         # [m] setpoint for x_mean
             error_offset = setpoint_offset - self.x_mean                                                # [m] control deviation
+            # TODO:
+            # have a look at the exakt x_mean and set max_offset, make max_offset dependent on box width
             max_offset = 1.5                                                                            # [m] maximum mid-row-offset possible
             p_gain_offset = self.max_ang_vel_robot/max_offset*self.p_gain_tuning_factor_in_headland     # [(rad*m)/s] gain for p controller
             act_offset = p_gain_offset*error_offset                                                     # [rad/s] actuating variable
@@ -428,7 +474,7 @@ class MoveRobotPathPattern:
             pub_vel.publish(cmd_vel)
             return "state_headlands"
 
-    def state_turn_enter(self, pub_vel):
+    def state_turn_enter_row(self, pub_vel):
         # Extract scan points out of a rectangular box. This box is 
         # placed around the robot with itself lying in the center.
         # The scan points falling in this box are evaluated:
@@ -474,7 +520,7 @@ class MoveRobotPathPattern:
         else:
             self.move_robot(pub_vel, dist_x, ang_z, t)
             self.y_mean_old = self.y_mean
-            return "state_turn_enter"
+            return "state_turn_enter_row"
 
     def state_crop_path_pattern(self):
         # remove executed turn from path pattern
@@ -491,6 +537,13 @@ class MoveRobotPathPattern:
 
     def state_error(self):
         print("An error has occured and the robot is in safeguard stop.")
+        return "state_finished"
+    
+    def state_finished(self, pub_vel):
+        cmd_vel = Twist()
+        cmd_vel.linear.x = 0.0
+        cmd_vel.angular.z = 0.0
+        pub_vel.publish(cmd_vel)
         return "state_done"
 
     ###########################################
@@ -502,18 +555,20 @@ class MoveRobotPathPattern:
         fig = plt.figure(figsize=(7,20))
         while not rospy.is_shutdown() and self.state != "state_done":
             if self.state == "state_wait_at_start":
-                self.state = self.state_wait_at_start()
+                self.state = self.state_wait_at_start(self.pub_vel)
             elif self.state == "state_in_row":
                 self.state = self.state_in_row(self.pub_vel)
-            elif self.state == "state_turn_exit":
-                self.state = self.state_turn_exit(self.pub_vel)
+            elif self.state == "state_turn_exit_row":
+                self.state = self.state_turn_exit_row(self.pub_vel)
             elif self.state == "state_headlands":
                 self.state = self.state_headlands(self.pub_vel)
-            elif self.state == "state_turn_enter":
-                self.state = self.state_turn_enter(self.pub_vel)    
+            elif self.state == "state_turn_enter_row":
+                self.state = self.state_turn_enter_row(self.pub_vel)    
             elif self.state == "state_crop_path_pattern":
                 self.state = self.state_crop_path_pattern()
             elif self.state == "state_idle":
+                self.state = self.state_finished(self.pub_vel)
+            elif self.state == "state_finished":
                 self.state = self.state_idle(self.pub_vel)
             elif self.state == "state_error":
                 self.state = self.state_error()
