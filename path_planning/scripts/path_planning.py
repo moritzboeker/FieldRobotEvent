@@ -117,7 +117,7 @@ class MoveRobotPathPattern:
         y_max = 3.5*self.row_width
         self.laser_box_drive_row = self.laser_box(self.scan, x_min, x_max, y_min, y_max)
         self.x_mean = np.mean(self.laser_box_drive_row[0,:])
-        end_of_row = self.x_mean < -0.20        
+        end_of_row = self.x_mean < -0.10        
         return end_of_row
 
     def detect_robot_running_crazy(self, scan, collisions_thresh, collision_reset_time):
@@ -219,19 +219,31 @@ class MoveRobotPathPattern:
         # TODO:
         # bring angular velocity in dependence of max_lin_vel_in_row
         
-        angle_increment = self.scan.angle_increment
-        angle_outer_limit_curr = self.scan.angle_max
-        angle_outer_limit_targ = np.radians(135)
-        angle_inner_limit_targ = np.radians(22.5)
-        idx_ranges_outer = int(np.round((angle_outer_limit_curr - angle_outer_limit_targ) / angle_increment) + 1)
-        idx_ranges_inner = int(np.round((angle_outer_limit_curr - angle_inner_limit_targ) / angle_increment) + 1)
-        scan_cart = self.scan2cart_w_ign(self.scan, min_range=0.0, max_range=self.row_width)
-        self.scan_left = scan_cart[:, -idx_ranges_inner:-idx_ranges_outer]
-        self.scan_right = scan_cart[:, idx_ranges_outer:idx_ranges_inner]
+        # angle_increment = self.scan.angle_increment
+        # angle_outer_limit_curr = self.scan.angle_max
+        # angle_outer_limit_targ = np.radians(135)
+        # angle_inner_limit_targ = np.radians(22.5)
+        # idx_ranges_outer = int(np.round((angle_outer_limit_curr - angle_outer_limit_targ) / angle_increment) + 1)
+        # idx_ranges_inner = int(np.round((angle_outer_limit_curr - angle_inner_limit_targ) / angle_increment) + 1)
+        # scan_cart = self.scan2cart_w_ign(self.scan, min_range=0.0, max_range=self.row_width)
+        # self.scan_left = scan_cart[:, -idx_ranges_inner:-idx_ranges_outer]
+        # self.scan_right = scan_cart[:, idx_ranges_outer:idx_ranges_inner]
+
+        self.scan_left = self.laser_box(self.scan, -1.0, 1.5, self.robot_width/2, self.row_width)
+        self.scan_right = self.laser_box(self.scan, -1.0, 1.5, -self.row_width, -self.robot_width/2)
 
         mean_left = np.nanmean(self.scan_left[1, :])
         mean_right = np.nanmean(self.scan_right[1, :])
         
+        print("mean_left", mean_left, "mean_right", mean_right)
+        print("mean_left-mean_right", mean_left-mean_right)
+        # Problem: Wir fahren nicht zwischen Reihen sondern auf einer Reihe:
+        if mean_left - mean_right > 1.2*self.row_width:            
+            if abs(mean_left) < abs(mean_right):
+                mean_right = -self.row_width +  mean_left
+            elif abs(mean_right) < abs(mean_left):
+                mean_left = self.row_width + mean_right
+        print("mean_left_new", mean_left, "mean_right_new", mean_right)
 
         if np.isnan(mean_left) and not np.isnan(mean_right):
             offset = mean_right + self.row_width/2
