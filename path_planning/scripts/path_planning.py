@@ -117,7 +117,7 @@ class MoveRobotPathPattern:
         y_max = 3.5*self.row_width
         self.laser_box_drive_row = self.laser_box(self.scan, x_min, x_max, y_min, y_max)
         self.x_mean = np.mean(self.laser_box_drive_row[0,:])
-        end_of_row = self.x_mean < -0.10        
+        end_of_row = self.x_mean < -0.20        
         return end_of_row
 
     def detect_robot_running_crazy(self, scan, collisions_thresh, collision_reset_time):

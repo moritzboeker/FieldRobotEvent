@@ -3,10 +3,11 @@
  <!-- Run node to send goals -->
    <node pkg="path_planning" type="path_planning.py" name="path_planning" output="screen" >
     <param name="path_pattern" value="S 1L 1R 1L 1R 1L 1R 1L 1R 1L 1R 0L 1R 1L 1R 1L 1R 1L 1R 1L 1R F"/>
-    <param name="p_gain_tuning_factor_in_headland" value="1.0" />
-    <param name="max_lin_vel_in_row" value="0.5" /> <!--0.6-->
+    <param name="p_gain_offset_headland" value="2.0" />
+    <param name="p_gain_orient_headland" value="1.5" />
+    <param name="max_lin_vel_in_row" value="0.25" /> <!--0.6-->
     <param name="max_lin_vel_in_headland" value="0.25" /> <!--0.25-->
-    <param name="max_ang_vel_robot" value="0.9" /> <!--0.90-->
+    <param name="max_ang_vel_robot" value="0.25" /> <!--0.90-->
     <param name="time_for_quater_turn" value="2.5" /> <!-- durch linear geschwindigkeit ersetzen-->      
    </node>
 </launch>
