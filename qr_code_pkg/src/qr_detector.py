@@ -175,7 +175,7 @@ class image_qr:
         return img;
 
     def transform(self, p):
-        transform = self.tf_buffer.lookup_transform('base_link', p.header.frame_id, rospy.Time(0), rospy.Duration(1.0))
+        transform = self.tf_buffer.lookup_transform('map', p.header.frame_id, rospy.Time(0), rospy.Duration(1.0))
         self.pose_transformed = tf2_geometry_msgs.do_transform_pose(p, transform)
 
         return self.pose_transformed;
