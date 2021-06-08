@@ -1,14 +1,16 @@
 <launch>
 	<!-- Example finding 3D poses of the objects detected -->
-	<!-- $roslaunch openni_launch openni.launch depth_registration:=true -->
+	<!-- $roslaunch openni_launch openni.launch depth_registration:=true --> 
+
+	<include file="$(find qr_code_pkg)/launch/pollers.launch"/>
 	
 	<arg name="object_prefix" default="object"/>
 	<arg name="objects_path"  default="$(find find_object_2d)/current1"/>
-	<arg name="gui"           default="true"/>
+	<arg name="gui"           default="false"/>
 	<arg name="approx_sync"   default="true"/>
 	<arg name="pnp"           default="true"/>
 	<arg name="tf_example"    default="true"/>
-	<arg name="target_frame_id" default="/poller_A"/>
+	<arg name="target_frame_id" default="/map"/>
 	<arg name="settings_path" default="~/.ros/find_object_2d.ini"/>
 	
 	<arg name="rgb_topic"         default="/realsense/color/image_raw"/>
@@ -33,5 +35,11 @@
 	<node if="$(arg tf_example)" name="tf_example" pkg="find_object_2d" type="tf_example" output="screen">
 		<param name="target_frame_id" value="$(arg target_frame_id)" type="str"/>		
 		<param name="object_prefix" value="$(arg object_prefix)" type="str"/>
+	</node>
+
+	<node name="objectsPublisher_node" pkg="find_object_2d" type="objects_publisher.py" output="screen">
+	</node>
+
+	<node name="detection_spawner" pkg="virtual_maize_field" type="detection_spawner.py" output="screen">
 	</node>
 </launch>
