@@ -117,7 +117,7 @@ class MoveRobotPathPattern:
         y_max = 3.5*self.row_width
         self.laser_box_drive_row = self.laser_box(self.scan, x_min, x_max, y_min, y_max)
         self.x_mean = np.mean(self.laser_box_drive_row[0,:])
-        end_of_row = self.x_mean < -0.30        
+        end_of_row = self.x_mean < -0.3        
         return end_of_row
 
     def detect_robot_running_crazy(self, scan, collisions_thresh, collision_reset_time):
@@ -237,6 +237,8 @@ class MoveRobotPathPattern:
         mean_right = np.nanmean(self.scan_right[1, :])
         
         # # Solution for driving on row instead of in between rows
+        # # This also lead to some errors when some plants of a row are missing
+        # # and the robot can see the other row as well
         # if mean_left - mean_right > 1.2*self.row_width:            
         #     if abs(mean_left) < abs(mean_right):
         #         mean_right = -self.row_width +  mean_left
@@ -256,22 +258,18 @@ class MoveRobotPathPattern:
             offset = mean_right + self.row_width/2
         elif np.isnan(mean_right) and not np.isnan(mean_left):
             offset = mean_left - self.row_width/2
-        else:
+        elif not np.isnan(mean_right) and not np.isnan(mean_left):
             offset = mean_right + mean_left
-
-        if not np.isnan(offset):
-            # If the determined offset is a number, the controller
+            # If both means are a number, the controller
             # will get an update with the current offset value.
             alpha = 0.2
             self.offset_valid = alpha * self.offset_valid + (1-alpha) * offset
-        else:            
-            # If the determined offset is not a number (nan) a warning is raised and
+        else:
+            # If the determined mean are not a number (nan) a warning is raised and
             # the controller will not get an update but uses an angle of 0.0.
-            # Additionally, we will increase the used range of the laser scanner 
-            # each time if the warning persists. This will eventually solve the warning.
-            self.offset_valid = 0.0            
+            self.offset_valid = 0.0          
         
-        max_offset = (self.row_width/2) * 0.9                                                         # [m] maximum mid-row-offset possible
+        max_offset = self.row_width/2 # [m] maximum mid-row-offset possible
         normed_offset = self.offset_valid / max_offset
         normed_offset = self.clip(normed_offset, 1.0, -1.0)
         cmd_vel = Twist()
