@@ -147,6 +147,7 @@ class MoveRobotPathPattern:
         self.collision_ctr_previous = self.collision_ctr
         self.collision_ctr += num_collisions
         robot_running_crazy = self.collision_ctr > collisions_thresh
+        print("number of collisions", self.collision_ctr)
 
         collision_rate = self.collision_ctr - self.collision_ctr_previous
         if collision_rate == 0:
@@ -156,7 +157,6 @@ class MoveRobotPathPattern:
         else:
             self.time_start_reset_scan_dots = rospy.Time.now()
         return robot_running_crazy
-
     
     def laser_box(self, scan, x_min, x_max, y_min, y_max):
         xy_all = self.scan2cart_wo_ign(scan)
@@ -282,7 +282,7 @@ class MoveRobotPathPattern:
         pub_vel.publish(cmd_vel)
 
         end_of_row = self.detect_row_end()
-        robot_running_crazy = self.detect_robot_running_crazy(self.scan, collisions_thresh=40, collision_reset_time=3)
+        robot_running_crazy = self.detect_robot_running_crazy(self.scan, collisions_thresh=80, collision_reset_time=2.0)
 
         if robot_running_crazy:
             return "state_error"
@@ -568,7 +568,7 @@ class MoveRobotPathPattern:
 
     def launch_state_machine(self):
         rate = rospy.Rate(10)
-        fig = plt.figure(figsize=(7,20))
+        # fig = plt.figure(figsize=(7,20))
         while not rospy.is_shutdown() and self.state != "state_done":
             if self.state == "state_wait_at_start":
                 self.state = self.state_wait_at_start(self.pub_vel)
@@ -593,31 +593,31 @@ class MoveRobotPathPattern:
             print(self.state)
             rate.sleep()
 
-            resolution = 0.10
-            hist_min = -1.5*self.row_width
-            hist_max = 1.5*self.row_width
-            bins = int(round((hist_max - hist_min) / resolution))
+            # resolution = 0.10
+            # hist_min = -1.5*self.row_width
+            # hist_max = 1.5*self.row_width
+            # bins = int(round((hist_max - hist_min) / resolution))
 
-            plt.subplot(311)
-            plt.hist(self.laser_box_drive_headland[0,:], bins, label='x', range=[hist_min, hist_max], density=True)
-            plt.axvline(self.x_mean, color='r', linestyle='dashed', linewidth=2)
-            plt.legend(loc='upper left')
+            # plt.subplot(311)
+            # plt.hist(self.laser_box_drive_headland[0,:], bins, label='x', range=[hist_min, hist_max], density=True)
+            # plt.axvline(self.x_mean, color='r', linestyle='dashed', linewidth=2)
+            # plt.legend(loc='upper left')
 
-            plt.subplot(312)
-            plt.hist(self.laser_box_drive_headland[1,:], bins, label='y', range=[hist_min, hist_max], density=True)
-            plt.axvline(self.y_mean, color='r', linestyle='dashed', linewidth=2)
-            plt.legend(loc='upper left')
+            # plt.subplot(312)
+            # plt.hist(self.laser_box_drive_headland[1,:], bins, label='y', range=[hist_min, hist_max], density=True)
+            # plt.axvline(self.y_mean, color='r', linestyle='dashed', linewidth=2)
+            # plt.legend(loc='upper left')
 
-            ax1 = plt.subplot(313, aspect='equal')
-            ax1.set_xlim([-2, 2])
-            ax1.set_ylim([-2, 2])
-            plt.grid(color='k', alpha=0.5, linestyle='dashed', linewidth=0.5)
-            plt.plot(self.scan_left[0,:],self.scan_left[1,:], "ob")
-            plt.plot(self.scan_right[0,:],self.scan_right[1,:], "oy")
-            plt.plot(self.x_mean, self.y_mean, "or")
-            plt.draw()
-            plt.pause(0.05)
-            fig.clear()      
+            # ax1 = plt.subplot(313, aspect='equal')
+            # ax1.set_xlim([-2, 2])
+            # ax1.set_ylim([-2, 2])
+            # plt.grid(color='k', alpha=0.5, linestyle='dashed', linewidth=0.5)
+            # plt.plot(self.scan_left[0,:],self.scan_left[1,:], "ob")
+            # plt.plot(self.scan_right[0,:],self.scan_right[1,:], "oy")
+            # plt.plot(self.x_mean, self.y_mean, "or")
+            # plt.draw()
+            # plt.pause(0.05)
+            # fig.clear()      
         print("Moving robot according to path pattern completed.")
         return None
 
