@@ -7,9 +7,9 @@
     <!--param name="path_pattern" textfile="/catkin/src/Virtual_Field_Robot_Event/virtual_maize_field/map" /-->
     <param name="p_gain_offset_headland" value="2.0" />
     <param name="p_gain_orient_headland" value="1.5" />
-    <param name="max_lin_vel_in_row" value="0.9" /> <!--0.6-->
+    <param name="max_lin_vel_in_row" value="0.25" /> <!--0.6-->
     <param name="max_lin_vel_in_headland" value="0.25" /> <!--0.25-->
-    <param name="max_ang_vel_robot" value="1.25" /> <!--0.90-->
+    <param name="max_ang_vel_robot" value="0.4" /> <!--0.90-->
     <param name="time_for_quater_turn" value="2.5" /> <!-- durch linear geschwindigkeit ersetzen-->      
    </node>
 </launch>
