@@ -8,7 +8,7 @@
 	<arg name="approx_sync"   default="true"/>
 	<arg name="pnp"           default="true"/>
 	<arg name="tf_example"    default="true"/>
-	<arg name="target_frame_id" default="/base_link"/>
+	<arg name="target_frame_id" default="/poller_A"/>
 	<arg name="settings_path" default="~/.ros/find_object_2d.ini"/>
 	
 	<arg name="rgb_topic"         default="/realsense/color/image_raw"/>

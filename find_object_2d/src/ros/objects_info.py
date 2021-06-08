@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 from __future__ import print_function
 
+import csv
+import string   
 import rospy
 import message_filters
 from find_object_2d.msg     import ObjectPose
@@ -24,13 +26,17 @@ def callback(objectsName, objectsPose):
     pub = rospy.Publisher('objectsInfo', ObjectPose, queue_size=10)                       
     msg = ObjectPose()                              
     path = str(objectsName.filePaths)
-    subpath = path.split("/")[-1]
-    subpath2 = subpath.split(".")[0]
-    name = subpath2[0:-1]
-    msg.kind = name
+    if "litter" in path:
+        msg.kind = "litter"
+    elif "weed" in path:
+        msg.kind = "weed"
+    else: 
+        return  
     msg.x = objectsPose.pose.position.x     
     msg.y = objectsPose.pose.position.y               
-
+    f = open('/home/user/catkin_ws/src/FieldRobotEvent/Virtual_Field_Robot_Event/virtual_maize_field/map/markers.csv', "a")
+    f.write(str(msg.x) +";"+str(msg.y)+";"+str(msg.kind) + "\n")
+    f.close()
     pub.publish(msg)                              
     rospy.sleep(1)
 
