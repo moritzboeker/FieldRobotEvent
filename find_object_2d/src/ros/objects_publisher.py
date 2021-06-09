@@ -20,7 +20,7 @@ def listener():
 
     info_sub = message_filters.Subscriber('/objectsName', DetectionInfo)
     pose_sub = message_filters.Subscriber('/objectsPose', PoseStamped)
-    ts = message_filters.ApproximateTimeSynchronizer([info_sub, pose_sub], 10, 0.5, allow_headerless=True)
+    ts = message_filters.ApproximateTimeSynchronizer([info_sub, pose_sub], 10, 1.5, allow_headerless=True)
     ts.registerCallback(callback)
     rospy.spin()
 
