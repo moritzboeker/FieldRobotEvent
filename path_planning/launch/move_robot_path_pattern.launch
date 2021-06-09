@@ -1,6 +1,7 @@
 <launch>
    <master auto="start"/>
    <include file="$(find find_object_2d)/launch/find_object_3d.launch"/>
+   <include file="$(find path_planning)/launch/my_robot_simulation.launch"/>
  <!-- Run node to send goals -->
    <node pkg="path_planning" type="path_planning.py" name="path_planning" output="screen" >
     <param name="path_pattern" value="S 1L 1R 1L 1R 1L 1R 1L 1R 1L 1R 1L 1R 1L 1R F" />
