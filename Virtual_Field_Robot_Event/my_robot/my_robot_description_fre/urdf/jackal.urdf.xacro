@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<robot name="jackal" xmlns:xacro="http://www.ros.org/wiki/xacro">
+<robot name="my_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:property name="PI" value="3.1415926535897931" />
 
   <xacro:property name="wheelbase" value="0.262" />
@@ -29,7 +29,7 @@
       <visual>
         <origin xyz="0 0 0" rpy="${PI/2} 0 0"/>
         <geometry>
-          <mesh filename="package://jackal_description_fre/meshes/jackal-wheel.stl"/>
+          <mesh filename="package://my_robot_description_fre/meshes/jackal-wheel.stl"/>
         </geometry>
         <material name="black" />
       </visual>
@@ -104,7 +104,7 @@
     <visual>
       <origin xyz="0 0 ${footprint_vertical_offset}" rpy="${PI/2} 0 ${PI/2}"/>
       <geometry>
-        <mesh filename="package://jackal_description_fre/meshes/jackal-base.stl"/>
+        <mesh filename="package://my_robot_description_fre/meshes/jackal-base.stl"/>
       </geometry>
       <material name="dark_grey" />
     </visual>
@@ -130,7 +130,7 @@
     <link name="front_fender_link">
       <visual>
         <geometry>
-          <mesh filename="package://jackal_description_fre/meshes/jackal-fender.stl"/>
+          <mesh filename="package://my_robot_description_fre/meshes/jackal-fender.stl"/>
         </geometry>
         <material name="yellow" />
       </visual>
@@ -141,7 +141,7 @@
     <link name="front_fender_link">
       <visual>
         <geometry>
-          <mesh filename="package://jackal_description_fre/meshes/accessory_fender.stl"/>
+          <mesh filename="package://my_robot_description_fre/meshes/accessory_fender.stl"/>
         </geometry>
         <material name="yellow" />
       </visual>
@@ -165,7 +165,7 @@
     <link name="rear_fender_link">
       <visual>
         <geometry>
-          <mesh filename="package://jackal_description_fre/meshes/jackal-fender.stl"/>
+          <mesh filename="package://my_robot_description_fre/meshes/jackal-fender.stl"/>
         </geometry>
         <material name="yellow" />
       </visual>
@@ -176,7 +176,7 @@
     <link name="rear_fender_link">
       <visual>
         <geometry>
-          <mesh filename="package://jackal_description_fre/meshes/accessory_fender.stl"/>
+          <mesh filename="package://my_robot_description_fre/meshes/accessory_fender.stl"/>
         </geometry>
         <material name="yellow" />
       </visual>
@@ -249,16 +249,15 @@
     <origin xyz="${mount_spacing} 0 0" />
   </joint>
 
-
   <!-- Bring in simulation data for Gazebo. -->
-  <xacro:include filename="$(find jackal_description_fre)/urdf/jackal.gazebo" />
+  <xacro:include filename="$(find my_robot_description_fre)/urdf/jackal.gazebo" />
 
   <!-- Optional standard accessories, including their simulation data. The rendering
        of these into the final description is controlled by optenv variables, which
        default each one to off.-->
-  <xacro:include filename="$(find jackal_description_fre)/urdf/accessories.urdf.xacro" />
+  <xacro:include filename="$(find my_robot_description_fre)/urdf/accessories.urdf.xacro" />
 
   <!-- Optional custom includes. -->
-  <!--xacro:include filename="$(optenv JACKAL_URDF_EXTRAS /home/user/catkin_ws/src/FieldRobotEvent/Virtual_Field_Robot_Event/jackal_fre/jackal_description_fre/urdf/realsense.urdf.xacro)" /-->
-  <!--xacro:include filename="$(optenv JACKAL_URDF_EXTRAS /home/user/catkin_ws/src/FieldRobotEvent/Virtual_Field_Robot_Event/jackal_fre/jackal_description_fre/urdf/realsense2.urdf.xacro)" /-->
+  <!--xacro:include filename="$(optenv JACKAL_URDF_EXTRAS /home/user/catkin_ws/src/FieldRobotEvent/Virtual_Field_Robot_Event/my_robot_fre/my_robot_description_fre/urdf/realsense.urdf.xacro)" /-->
+  <!--xacro:include filename="$(optenv JACKAL_URDF_EXTRAS /home/user/catkin_ws/src/FieldRobotEvent/Virtual_Field_Robot_Event/my_robot_fre/my_robot_description_fre/urdf/realsense2.urdf.xacro)" /-->
 </robot>
