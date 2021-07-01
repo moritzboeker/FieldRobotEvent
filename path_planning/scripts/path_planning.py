@@ -117,7 +117,7 @@ class MoveRobotPathPattern:
         y_max = 3.5*self.row_width
         self.laser_box_drive_row = self.laser_box(self.scan, x_min, x_max, y_min, y_max)
         self.x_mean = np.mean(self.laser_box_drive_row[0,:])
-        end_of_row = self.x_mean < -0.3        
+        end_of_row = self.x_mean < -0.1 
         return end_of_row
 
     def detect_robot_running_crazy(self, scan, collisions_thresh, collision_reset_time):
@@ -154,6 +154,7 @@ class MoveRobotPathPattern:
             if rospy.Time.now() - self.time_start_reset_scan_dots > rospy.Duration.from_sec(collision_reset_time):
                 self.collision_ctr = 0
                 self.collision_ctr_previous = 0
+                print("reset collisions")
         else:
             self.time_start_reset_scan_dots = rospy.Time.now()
         return robot_running_crazy
@@ -260,14 +261,13 @@ class MoveRobotPathPattern:
             offset = mean_left - self.row_width/2
         elif not np.isnan(mean_right) and not np.isnan(mean_left):
             offset = mean_right + mean_left
-            # If both means are a number, the controller
-            # will get an update with the current offset value.
-            alpha = 0.2
-            self.offset_valid = alpha * self.offset_valid + (1-alpha) * offset
         else:
             # If the determined mean are not a number (nan) a warning is raised and
-            # the controller will not get an update but uses an angle of 0.0.
+            # the controller offset of 0.0
             self.offset_valid = 0.0          
+
+        alpha = 0.2
+        self.offset_valid = alpha * self.offset_valid + (1-alpha) * offset
         
         max_offset = self.row_width/2 # [m] maximum mid-row-offset possible
         normed_offset = self.offset_valid / max_offset
@@ -340,10 +340,9 @@ class MoveRobotPathPattern:
         if which_row == 0:
             dist_x = 0.0
 
-        # x_close_to_zero = abs(self.x_mean) < 5e-2
-        # x_zero_crossing = self.x_mean*self.x_mean_old < 0.0
-        # if x_close_to_zero or x_zero_crossing:
-        if self.x_mean > 0.1:
+        x_close_to_zero = abs(self.x_mean) < 0.1
+        x_zero_crossing = self.x_mean*self.x_mean_old < 0.0
+        if x_close_to_zero or x_zero_crossing:
             self.time_start = rospy.Time.now()
             # reset variable
             self.x_mean_old = 0.0
@@ -529,7 +528,7 @@ class MoveRobotPathPattern:
         if which_row == 0:
             dist_x = 0.0
 
-        y_close_to_zero = abs(self.y_mean) < 5e-2
+        y_close_to_zero = abs(self.y_mean) < 0.1
         y_zero_crossing = self.y_mean*self.y_mean_old < 0.0
         if y_close_to_zero or y_zero_crossing:
             # reset variable

@@ -103,5 +103,5 @@ if __name__ == "__main__":
 
     print("Found the robot description in the param server")
     robot_name = URDF.from_parameter_server().name
-
+    print("robot_name",robot_name)
     listener()
